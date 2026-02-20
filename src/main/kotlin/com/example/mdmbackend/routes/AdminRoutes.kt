@@ -1,5 +1,6 @@
 package com.example.mdmbackend.routes
 
+import com.example.mdmbackend.dto.DeviceLinkRequest
 import com.example.mdmbackend.dto.ProfileCreateRequest
 import com.example.mdmbackend.dto.ProfileUpdateRequest
 import com.example.mdmbackend.middleware.UserPrincipal
@@ -8,6 +9,7 @@ import com.example.mdmbackend.service.DeviceService
 import com.example.mdmbackend.service.ProfileService
 import com.example.mdmbackend.repository.DeviceRepository
 import com.example.mdmbackend.repository.ProfileRepository
+import com.example.mdmbackend.service.AdminDeviceService
 import io.ktor.http.*
 import io.ktor.server.application.*
 import io.ktor.server.auth.*
@@ -17,8 +19,12 @@ import io.ktor.server.routing.*
 import java.util.UUID
 
 fun Route.adminRoutes() {
-    val profiles = ProfileService(ProfileRepository())
-    val devices = DeviceService(DeviceRepository(), ProfileRepository())
+    val profileRepo = ProfileRepository()
+    val deviceRepo = DeviceRepository()
+
+    val profiles = ProfileService(profileRepo)
+    val devices = AdminDeviceService(deviceRepo, profileRepo)
+
 
     authenticate("session") {
         route("/admin") {
@@ -121,9 +127,10 @@ fun Route.adminRoutes() {
                         return@put
                     }
                     val id = UUID.fromString(call.parameters["id"]!!)
-                    val body = call.receive<Map<String, String?>>()
-                    val userCode = body["userCode"]
+                    val body = call.receive<DeviceLinkRequest>()
+                    val userCode = body.userCode
                     val d = devices.linkDeviceToUserCode(id, userCode)
+
                     if (d == null) {
                         call.respond(HttpStatusCode.NotFound, mapOf("error" to "Device not found"))
                         return@put

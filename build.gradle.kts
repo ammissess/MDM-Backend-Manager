@@ -31,14 +31,18 @@ dependencies {
     implementation("org.jetbrains.exposed:exposed-jdbc:$exposedVersion")
     implementation("org.jetbrains.exposed:exposed-java-time:$exposedVersion")
 
-    runtimeOnly("com.h2database:h2:2.2.224")
-    runtimeOnly("org.postgresql:postgresql:42.7.4")
+    // (tuỳ chọn) bỏ H2 nếu không dùng nữa
+    //runtimeOnly("com.h2database:h2:2.2.224")
+
+    // (tuỳ chọn) bỏ postgres nếu không dùng
+    //runtimeOnly("org.postgresql:postgresql:42.7.4")
+    //mysql
+    runtimeOnly("com.mysql:mysql-connector-j:9.0.0")
 
     implementation("org.mindrot:jbcrypt:0.4")
 
     //fix FLF4J issue
     implementation("ch.qos.logback:logback-classic:1.5.18")
-
 
     testImplementation(kotlin("test"))
     testImplementation("io.ktor:ktor-server-tests-jvm:$ktorVersion")

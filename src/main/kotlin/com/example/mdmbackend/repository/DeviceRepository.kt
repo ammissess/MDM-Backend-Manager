@@ -3,6 +3,7 @@ package com.example.mdmbackend.repository
 import com.example.mdmbackend.model.DeviceEventsTable
 import com.example.mdmbackend.model.DevicesTable
 import com.example.mdmbackend.model.ProfilesTable
+import com.example.mdmbackend.util.PasswordHasher
 import org.jetbrains.exposed.dao.id.EntityID
 import org.jetbrains.exposed.sql.ResultRow
 import org.jetbrains.exposed.sql.SortOrder
@@ -14,6 +15,9 @@ import org.jetbrains.exposed.sql.update
 import org.jetbrains.exposed.sql.SqlExpressionBuilder.eq
 import java.time.Instant
 import java.util.UUID
+import com.example.mdmbackend.model.DeviceStatus
+import org.jetbrains.exposed.sql.*
+import com.example.mdmbackend.dto.DeviceResponse
 
 data class DeviceRecord(
     val id: UUID,
@@ -25,7 +29,9 @@ data class DeviceRecord(
     val serial: String,
     val sdkInt: Int,
     val lastSeenAt: Instant,
+    val status: String, // ✅ thêm
 )
+
 
 class DeviceRepository {
 
@@ -138,7 +144,65 @@ class DeviceRepository {
             model = row[DevicesTable.model],
             serial = row[DevicesTable.serial],
             sdkInt = row[DevicesTable.sdkInt],
+            status = row[DevicesTable.status].name,
             lastSeenAt = row[DevicesTable.lastSeenAt],
         )
     }
+
+    //✅ Thêm hàm mới trong DeviceRepository (tối thiểu để compile):
+    fun upsertRegister(
+        deviceCode: String,
+        androidVersion: String,
+        sdkInt: Int,
+        manufacturer: String,
+        model: String,
+        imei: String,
+        serial: String,
+        batteryLevel: Int,
+        isCharging: Boolean,
+        wifiEnabled: Boolean,
+    ): DeviceRecord = transaction {
+        // logic tương tự upsert(), chỉ khác là set thêm các fields mới
+        // (bạn cần đảm bảo DevicesTable có các cột tương ứng)
+        // Tạm thời: gọi lại upsert() cũ nếu bạn chưa thêm cột
+        upsert(deviceCode, null, manufacturer, model, serial, sdkInt)
+    }
+
+
+    //them trang thai thiet bi khi khoa va mo khoa
+
+    fun findStatus(deviceCode: String): String? = transaction {
+        DevicesTable
+            .selectAll()
+            .where { DevicesTable.deviceCode eq deviceCode }
+            .limit(1)
+            .firstOrNull()
+            ?.get(DevicesTable.status)
+            ?.name
+    }
+
+    fun unlock(deviceCode: String, plainPass: String): Boolean = transaction {
+        val row = DevicesTable
+            .selectAll()
+            .where { DevicesTable.deviceCode eq deviceCode }
+            .limit(1)
+            .firstOrNull()
+            ?: return@transaction false
+
+        val hash = row[DevicesTable.unlockPassHash]
+        if (hash.isBlank()) return@transaction false
+
+        val ok = PasswordHasher.verify(plainPass, hash)
+        if (!ok) return@transaction false
+
+        DevicesTable.update({ DevicesTable.deviceCode eq deviceCode }) {
+            it[DevicesTable.status] = DeviceStatus.ACTIVE
+            it[DevicesTable.lastSeenAt] = Instant.now()
+        }
+        true
+    }
+
+
+
+
 }

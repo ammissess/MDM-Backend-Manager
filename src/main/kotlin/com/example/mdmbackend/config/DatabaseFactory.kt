@@ -25,12 +25,14 @@ object DatabaseFactory {
         Database.connect(dataSource!!)
 
         transaction {
-            SchemaUtils.create(
+            SchemaUtils.createMissingTablesAndColumns(
                 UsersTable,
                 SessionsTable,
                 ProfilesTable,
                 ProfileAllowedAppsTable,
                 DevicesTable,
+                DevicePrivateInfoTable,
+                DeviceAppUsageTable,
                 DeviceEventsTable,
             )
         }

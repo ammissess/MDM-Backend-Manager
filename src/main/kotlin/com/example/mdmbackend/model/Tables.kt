@@ -28,7 +28,8 @@ object SessionsTable : Table("sessions") {
 object ProfilesTable : UUIDTable("profiles") {
     val userCode = varchar("user_code", 64).uniqueIndex()
     val name = varchar("name", 128)
-    val description = text("description").default("")
+    //val description = text("description").default("")
+    val description = varchar("description", length = 2048).default("")
 
     // Policy flags
     val disableWifi = bool("disable_wifi").default(false)
@@ -57,6 +58,10 @@ object ProfileAllowedAppsTable : Table("profile_allowed_apps") {
 object DevicesTable : UUIDTable("devices") {
     val deviceCode = varchar("device_code", 128).uniqueIndex()
 
+    // ✅ thêm 2 cột mới
+    val status = enumerationByName("status", 16, DeviceStatus::class).default(DeviceStatus.LOCKED)
+    val unlockPassHash = varchar("unlock_pass_hash", 120).default("")
+
     // ✅ FK nullable tới UUIDTable: reference(...).nullable()
     val profileId = reference("profile_id", ProfilesTable, onDelete = ReferenceOption.SET_NULL).nullable()
 
@@ -74,6 +79,8 @@ object DeviceEventsTable : UUIDTable("device_events") {
     val deviceId = reference("device_id", DevicesTable, onDelete = ReferenceOption.CASCADE)
 
     val type = varchar("type", 64)
-    val payload = text("payload").default("{}")
+    //val payload = text("payload").default("{}")
+    val payload = varchar("payload", length = 8192).default("{}")
+
     val createdAt = timestamp("created_at").clientDefault { Instant.now() }
 }

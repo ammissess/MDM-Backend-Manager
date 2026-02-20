@@ -1,5 +1,6 @@
 package com.example.mdmbackend.repository
 
+import com.example.mdmbackend.dto.DeviceConfigResponse
 import com.example.mdmbackend.dto.ProfileCreateRequest
 import com.example.mdmbackend.dto.ProfileUpdateRequest
 import com.example.mdmbackend.model.ProfileAllowedAppsTable
@@ -147,4 +148,21 @@ class ProfileRepository {
             updatedAt = row[ProfilesTable.updatedAt],
         )
     }
+
+    //ProfileRepository: thêm helper map sang DeviceConfigResponse
+    fun toDeviceConfigResponse(p: ProfileRecord): DeviceConfigResponse =
+        DeviceConfigResponse(
+            userCode = p.userCode,
+            allowedApps = p.allowedApps,
+            disableWifi = p.disableWifi,
+            disableBluetooth = p.disableBluetooth,
+            disableCamera = p.disableCamera,
+            disableStatusBar = p.disableStatusBar,
+            kioskMode = p.kioskMode,
+            blockUninstall = p.blockUninstall,
+            showWifi = p.showWifi,
+            showBluetooth = p.showBluetooth,
+            configVersionEpochMillis = p.updatedAt.toEpochMilli(),
+        )
+
 }

@@ -17,6 +17,7 @@ data class AppConfig(
         val adminPass: String,
         val deviceUser: String,
         val devicePass: String,
+        val defaultDeviceUnlockPass: String, // ✅ thêm
         val defaultUserCode: String,
         val defaultAllowedApps: List<String>,
     )
@@ -56,9 +57,14 @@ data class AppConfig(
                     adminPass = seed.property("adminPass").getString(),
                     deviceUser = seed.property("deviceUser").getString(),
                     devicePass = seed.property("devicePass").getString(),
+
+                    // ✅ thêm dòng này
+                    defaultDeviceUnlockPass = seed.property("defaultDeviceUnlockPass").getString(),
+
                     defaultUserCode = seed.property("defaultUserCode").getString(),
                     defaultAllowedApps = seed.property("defaultAllowedApps").getList(),
                 ),
+
                 db = DbConfig(
                     jdbcUrl = db.property("jdbcUrl").getString(),
                     driver = db.property("driver").getString(),

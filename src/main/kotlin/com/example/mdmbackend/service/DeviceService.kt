@@ -1,62 +1,52 @@
 package com.example.mdmbackend.service
 
-import com.example.mdmbackend.dto.DeviceConfigResponse
-import com.example.mdmbackend.dto.DeviceEventRequest
+import com.example.mdmbackend.config.AppConfig
 import com.example.mdmbackend.dto.DeviceRegisterRequest
-import com.example.mdmbackend.dto.DeviceResponse
+import com.example.mdmbackend.dto.DeviceRegisterResponse
+import com.example.mdmbackend.dto.DeviceEventRequest
+import com.example.mdmbackend.dto.LocationUpdateRequest
+import com.example.mdmbackend.dto.UsageReportRequest
+import com.example.mdmbackend.model.DeviceStatus
+import com.example.mdmbackend.repository.DeviceAppUsageRepository
+import com.example.mdmbackend.repository.DevicePrivateInfoRepository
 import com.example.mdmbackend.repository.DeviceRepository
 import com.example.mdmbackend.repository.ProfileRepository
-import com.example.mdmbackend.util.toEpochMillis
 import java.time.Instant
-import java.util.UUID
+
+data class UnlockResult(
+    val ok: Boolean,
+    val status: String,
+    val message: String
+)
 
 class DeviceService(
     private val devices: DeviceRepository,
     private val profiles: ProfileRepository,
+    private val privateInfo: DevicePrivateInfoRepository,
+    private val usage: DeviceAppUsageRepository,
 ) {
 
-    fun register(req: DeviceRegisterRequest): DeviceResponse {
-        val profileId = req.userCode?.let { profiles.findByUserCode(it)?.id }
-        val device = devices.upsert(
+    fun register(req: DeviceRegisterRequest): DeviceRegisterResponse {
+        // upsert device basic + telemetry (bạn sẽ map thêm fields trong repo)
+        val record = devices.upsertRegister(
             deviceCode = req.deviceCode,
-            profileId = profileId,
+            androidVersion = req.androidVersion,
+            sdkInt = req.sdkInt,
             manufacturer = req.manufacturer,
             model = req.model,
+            imei = req.imei,
             serial = req.serial,
-            sdkInt = req.sdkInt,
+            batteryLevel = req.batteryLevel,
+            isCharging = req.isCharging,
+            wifiEnabled = req.wifiEnabled,
         )
-        return device.toResponse()
-    }
 
-    fun list(): List<DeviceResponse> = devices.list().map { it.toResponse() }
-
-    fun get(id: UUID): DeviceResponse? = devices.findById(id)?.toResponse()
-
-    fun getByDeviceCode(deviceCode: String): DeviceResponse? = devices.findByDeviceCode(deviceCode)?.toResponse()
-
-    /**
-     * Device poll config theo userCode (mã người dùng) — giống concept profile ở mẫu backend.
-     */
-    fun getConfigByUserCode(userCode: String): DeviceConfigResponse? {
-        val profile = profiles.findByUserCode(userCode) ?: return null
-        return DeviceConfigResponse(
-            userCode = profile.userCode,
-            allowedApps = profile.allowedApps,
-            disableWifi = profile.disableWifi,
-            disableBluetooth = profile.disableBluetooth,
-            disableCamera = profile.disableCamera,
-            disableStatusBar = profile.disableStatusBar,
-            kioskMode = profile.kioskMode,
-            blockUninstall = profile.blockUninstall,
-            showWifi = profile.showWifi,
-            showBluetooth = profile.showBluetooth,
-            configVersionEpochMillis = profile.updatedAt.toEpochMillis(),
+        return DeviceRegisterResponse(
+            deviceId = record.id.toString(),
+            deviceCode = record.deviceCode,
+            status = record.status,
+            message = null
         )
-    }
-
-    fun linkDeviceToUserCode(deviceId: UUID, userCode: String?): DeviceResponse? {
-        val profileId = userCode?.let { profiles.findByUserCode(it)?.id }
-        return devices.setProfile(deviceId, profileId)?.toResponse()
     }
 
     fun addEvent(deviceCode: String, req: DeviceEventRequest): Boolean {
@@ -65,16 +55,48 @@ class DeviceService(
         return true
     }
 
-    private fun com.example.mdmbackend.repository.DeviceRecord.toResponse(): DeviceResponse {
-        return DeviceResponse(
-            id = id.toString(),
-            deviceCode = deviceCode,
-            userCode = userCode,
-            manufacturer = manufacturer,
-            model = model,
-            serial = serial,
-            sdkInt = sdkInt,
-            lastSeenAtEpochMillis = lastSeenAt.toEpochMillis(),
-        )
+    fun getConfigByUserCode(userCode: String) =
+        profiles.findByUserCode(userCode)?.let { p ->
+            // map sang DeviceConfigResponse như bạn đang làm
+            profiles.toDeviceConfigResponse(p)
+        }
+
+    fun getDeviceStatus(deviceCode: String): String? = devices.findStatus(deviceCode)
+
+    fun unlock(deviceCode: String, password: String): UnlockResult {
+        val status = devices.findStatus(deviceCode) ?: return UnlockResult(false, "NOT_FOUND", "Device not found")
+
+        if (status == DeviceStatus.ACTIVE.name) {
+            return UnlockResult(true, DeviceStatus.ACTIVE.name, "Already unlocked")
+        }
+
+        val ok = devices.unlock(deviceCode, password)
+        return if (ok) UnlockResult(true, DeviceStatus.ACTIVE.name, "Unlocked")
+        else UnlockResult(false, DeviceStatus.LOCKED.name, "Invalid password or device not initialized")
     }
+
+    fun updateLocation(req: LocationUpdateRequest): Boolean {
+        val device = devices.findByDeviceCode(req.deviceCode) ?: return false
+        privateInfo.upsertLocation(
+            deviceId = device.id,
+            lat = req.latitude,
+            lon = req.longitude,
+            acc = req.accuracyMeters
+            // nếu repo có at thì thêm: , at = Instant.now()
+        )
+        return true
+    }
+
+    fun insertUsage(req: UsageReportRequest): Boolean {
+        val device = devices.findByDeviceCode(req.deviceCode) ?: return false
+        usage.insertUsage(
+            deviceId = device.id,
+            packageName = req.packageName,
+            startedAt = Instant.ofEpochMilli(req.startedAtEpochMillis),
+            endedAt = Instant.ofEpochMilli(req.endedAtEpochMillis),
+            durationMs = req.durationMs
+        )
+        return true
+    }
+
 }
