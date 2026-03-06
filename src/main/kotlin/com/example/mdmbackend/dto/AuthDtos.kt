@@ -6,6 +6,7 @@ import kotlinx.serialization.Serializable
 data class LoginRequest(
     val username: String,
     val password: String,
+    val deviceCode: String? = null, // NEW, optional (web dashboard vẫn OK):contentReference[oaicite:35]{index=35}
 )
 
 @Serializable

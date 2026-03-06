@@ -16,10 +16,12 @@ data class SessionRecord(
     val token: UUID,
     val userId: UUID,
     val expiresAt: Instant,
+    val deviceCode: String? = null,
 )
 
 class SessionRepository {
 
+/*
     fun create(userId: UUID, expiresAt: Instant): SessionRecord = transaction {
         val token = UUID.randomUUID()
 
@@ -31,8 +33,20 @@ class SessionRepository {
 
         SessionRecord(token, userId, expiresAt)
     }
+*/
 
-    fun find(token: UUID): SessionRecord? = transaction {
+    fun create(userId: UUID, expiresAt: Instant, deviceCode: String?): SessionRecord = transaction {
+        val token = UUID.randomUUID()
+        SessionsTable.insert {
+            it[SessionsTable.token] = token
+            it[SessionsTable.userId] = EntityID(userId, UsersTable)
+            it[SessionsTable.expiresAt] = expiresAt
+            it[SessionsTable.deviceCode] = deviceCode
+        }
+        SessionRecord(token, userId, expiresAt, deviceCode)
+    }
+
+/*    fun find(token: UUID): SessionRecord? = transaction {
         SessionsTable
             .selectAll()
             .where { SessionsTable.token eq token }
@@ -45,6 +59,17 @@ class SessionRepository {
                 )
             }
             .firstOrNull()
+    }*/
+
+    fun find(token: UUID): SessionRecord? = transaction {
+        SessionsTable.selectAll().where { SessionsTable.token eq token }.limit(1).map { row ->
+            SessionRecord(
+                token = row[SessionsTable.token],
+                userId = row[SessionsTable.userId].value,
+                expiresAt = row[SessionsTable.expiresAt],
+                deviceCode = row[SessionsTable.deviceCode]
+            )
+        }.firstOrNull()
     }
 
     fun delete(token: UUID): Boolean = transaction {

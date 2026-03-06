@@ -1,0 +1,27 @@
+repomix-output.xml
+# Gradle
+.gradle/
+build/
+
+# Kotlin / Java compiled files
+*.class
+*.jar
+*.war
+*.ear
+
+# IntelliJ
+.idea/
+*.iml
+out/
+
+# Logs
+*.log
+
+# OS
+.DS_Store
+Thumbs.db
+
+# temp
+*.tmp
+*.lock
+*.bin

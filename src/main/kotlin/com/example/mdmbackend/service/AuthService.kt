@@ -18,6 +18,7 @@ class AuthService(
         val token: UUID,
         val expiresAt: Instant,
         val role: String,
+        val deviceCode: String? = null, // ✅ default để không phải sửa call site
     )
 
     fun login(req: LoginRequest): LoginResult? {
@@ -26,8 +27,15 @@ class AuthService(
         if (!ok) return null
 
         val expiresAt = Instant.now().plus(cfg.auth.sessionTtlMinutes, ChronoUnit.MINUTES)
-        val session = sessions.create(user.id, expiresAt)
-        return LoginResult(session.token, session.expiresAt, user.role.name)
+
+
+        val session = sessions.create(user.id, expiresAt,req.deviceCode)
+        return LoginResult(
+            token = session.token,
+            expiresAt = session.expiresAt,
+            role = user.role.name,
+            deviceCode = session.deviceCode, // optional, có thể bỏ cũng được
+        )
     }
 
     fun logout(token: UUID): Boolean = sessions.delete(token)

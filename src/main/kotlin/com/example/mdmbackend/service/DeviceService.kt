@@ -5,6 +5,8 @@ import com.example.mdmbackend.dto.DeviceRegisterRequest
 import com.example.mdmbackend.dto.DeviceRegisterResponse
 import com.example.mdmbackend.dto.DeviceEventRequest
 import com.example.mdmbackend.dto.LocationUpdateRequest
+import com.example.mdmbackend.dto.UsageBatchReportRequest
+import com.example.mdmbackend.dto.UsageBatchReportResponse
 import com.example.mdmbackend.dto.UsageReportRequest
 import com.example.mdmbackend.model.DeviceStatus
 import com.example.mdmbackend.repository.DeviceAppUsageRepository
@@ -97,6 +99,22 @@ class DeviceService(
             durationMs = req.durationMs
         )
         return true
+    }
+
+    fun insertUsageBatch(req: UsageBatchReportRequest): UsageBatchReportResponse {
+        val device = devices.findByDeviceCode(req.deviceCode) ?: return UsageBatchReportResponse(false, 0)
+
+        val rows = req.items.map {
+            DeviceAppUsageRepository.UsageRow(
+            packageName = it.packageName,
+            startedAt = Instant.ofEpochMilli(it.startedAtEpochMillis),
+            endedAt = Instant.ofEpochMilli(it.endedAtEpochMillis),
+            durationMs = it.durationMs
+        )
+        }
+
+        val inserted = usage.insertUsageBatch(device.id, rows)
+        return UsageBatchReportResponse(ok = true, inserted = inserted)
     }
 
 }

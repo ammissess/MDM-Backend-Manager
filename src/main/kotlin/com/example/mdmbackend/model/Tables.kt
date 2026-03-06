@@ -13,7 +13,7 @@ object UsersTable : UUIDTable("users") {
     val createdAt = timestamp("created_at").clientDefault { Instant.now() }
 }
 
-object SessionsTable : Table("sessions") {
+/*object SessionsTable : Table("sessions") {
     val token = uuid("token")
 
     // ✅ FK tới UUIDTable: dùng reference(...)
@@ -22,6 +22,15 @@ object SessionsTable : Table("sessions") {
     val expiresAt = timestamp("expires_at")
     val createdAt = timestamp("created_at").clientDefault { Instant.now() }
 
+    override val primaryKey = PrimaryKey(token)
+}*/
+
+object SessionsTable : Table("sessions") {
+    val token = uuid("token")
+    val userId = reference("user_id", UsersTable, onDelete = ReferenceOption.CASCADE)
+    val deviceCode = varchar("device_code", 128).nullable() // NEW
+    val expiresAt = timestamp("expires_at")
+    val createdAt = timestamp("created_at").clientDefault { Instant.now() }
     override val primaryKey = PrimaryKey(token)
 }
 

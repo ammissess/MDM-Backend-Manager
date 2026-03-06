@@ -5,9 +5,11 @@ import com.example.mdmbackend.middleware.UserPrincipal
 import com.example.mdmbackend.model.Role
 import com.example.mdmbackend.service.DeviceService
 import com.example.mdmbackend.repository.DeviceAppUsageRepository
+import com.example.mdmbackend.repository.DeviceCommandRepository
 import com.example.mdmbackend.repository.DevicePrivateInfoRepository
 import com.example.mdmbackend.repository.DeviceRepository
 import com.example.mdmbackend.repository.ProfileRepository
+import com.example.mdmbackend.service.DeviceCommandService
 import io.ktor.http.*
 import io.ktor.server.auth.*
 import io.ktor.server.application.*
@@ -21,6 +23,9 @@ fun Route.deviceRoutes() {
     val profileRepo = ProfileRepository()
     val privateRepo = DevicePrivateInfoRepository()
     val usageRepo = DeviceAppUsageRepository()
+    //new
+    val commandRepo = DeviceCommandRepository()
+    val commandService = DeviceCommandService(deviceRepo, commandRepo)
 
     val deviceService = DeviceService(deviceRepo, profileRepo, privateRepo, usageRepo)
 
@@ -30,6 +35,87 @@ fun Route.deviceRoutes() {
          * Cần login trước (tạm thời token session).
          */
         authenticate("session") {
+
+            //new
+/*            post("/poll") {
+                val principal = call.principal<UserPrincipal>()!!
+                if (principal.role != Role.DEVICE) {
+                    call.respond(HttpStatusCode.Forbidden, mapOf("error" to "Forbidden"))
+                    return@post
+                }
+
+                val req = call.receive<DevicePollCommandsRequest>()
+                val resp = runCatching { commandService.devicePoll(req.deviceCode, req.limit) }
+                    .getOrElse { e ->
+                        // device not found / bad request
+                        call.respond(HttpStatusCode.BadRequest, mapOf("error" to (e.message ?: "Bad request")))
+                        return@post
+                    }
+
+                call.respond(resp)
+            }
+
+            post("/ack") {
+                val principal = call.principal<UserPrincipal>()!!
+                if (principal.role != Role.DEVICE) {
+                    call.respond(HttpStatusCode.Forbidden, mapOf("error" to "Forbidden"))
+                    return@post
+                }
+
+                val req = call.receive<DeviceAckCommandRequest>()
+                val resp = runCatching { commandService.deviceAck(req) }.getOrElse { e ->
+                    // dùng 409 khi ack không hợp lệ / conflict trạng thái
+                    call.respond(HttpStatusCode.Conflict, mapOf("error" to (e.message ?: "Conflict")))
+                    return@post
+                }
+                call.respond(resp)
+            }*/
+
+            post("/poll") {
+                val principal = call.principal<UserPrincipal>()!!
+                if (principal.role != Role.DEVICE) {
+                    call.respond(HttpStatusCode.Forbidden, mapOf("error" to "Forbidden"))
+                    return@post
+                }
+
+                val req = call.receive<DevicePollCommandsRequest>()
+                val resp = runCatching {
+                    // SỬA Ở ĐÂY: Truyền rõ tên tham số để không bị nhầm vị trí
+                    commandService.devicePoll(
+                        deviceCode = req.deviceCode,
+                        //sessionDeviceCode = principal.deviceCode, // Bổ sung tham số này
+                        sessionDeviceCode = req.deviceCode, //tam thoi
+                        limit = req.limit
+                    )
+                }.getOrElse { e ->
+                    call.respond(HttpStatusCode.BadRequest, mapOf("error" to (e.message ?: "Bad request")))
+                    return@post
+                }
+
+                call.respond(resp)
+            }
+
+            post("/ack") {
+                val principal = call.principal<UserPrincipal>()!!
+                if (principal.role != Role.DEVICE) {
+                    call.respond(HttpStatusCode.Forbidden, mapOf("error" to "Forbidden"))
+                    return@post
+                }
+
+                val req = call.receive<DeviceAckCommandRequest>()
+                val resp = runCatching {
+                    // SỬA Ở ĐÂY: Truyền thêm sessionDeviceCode
+                    commandService.deviceAck(
+                        req = req,
+                       //sessionDeviceCode = principal.deviceCode
+                        sessionDeviceCode = req.deviceCode //tam thoi
+                    )
+                }.getOrElse { e ->
+                    call.respond(HttpStatusCode.Conflict, mapOf("error" to (e.message ?: "Conflict")))
+                    return@post
+                }
+                call.respond(resp)
+            }
 
             // ✅ POST /api/device/register  (đã có sẵn, giữ nguyên)
             post("/register") {
@@ -80,7 +166,7 @@ fun Route.deviceRoutes() {
             }
 
             // ✅ POST /api/device/usage  (bảng usage app cá nhân riêng)
-            post("/usage") {
+/*            post("/usage") {
                 val principal = call.principal<UserPrincipal>()!!
                 if (principal.role != Role.DEVICE && principal.role != Role.ADMIN) {
                     call.respond(HttpStatusCode.Forbidden, mapOf("error" to "Forbidden"))
@@ -94,8 +180,23 @@ fun Route.deviceRoutes() {
                     return@post
                 }
                 call.respond(mapOf("ok" to true))
-            }
+            }*/
 
+            post("/usage/batch") {
+                val principal = call.principal<UserPrincipal>()!!
+                if (principal.role != Role.DEVICE && principal.role != Role.ADMIN) {
+                    call.respond(HttpStatusCode.Forbidden, mapOf("error" to "Forbidden"))
+                    return@post
+                }
+
+                val req = call.receive<UsageBatchReportRequest>()
+                val resp = deviceService.insertUsageBatch(req)
+                if (!resp.ok) {
+                    call.respond(HttpStatusCode.NotFound, mapOf("error" to "Device not found"))
+                    return@post
+                }
+                call.respond(resp)
+            }
             // ✅ POST /api/device/{deviceCode}/events (giữ)
             post("/{deviceCode}/events") {
                 val principal = call.principal<UserPrincipal>()!!
