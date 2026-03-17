@@ -1,9 +1,11 @@
 package com.example.mdmbackend.service
 
 import com.example.mdmbackend.dto.*
+import com.example.mdmbackend.middleware.HttpException
 import com.example.mdmbackend.model.CommandStatus
 import com.example.mdmbackend.repository.DeviceCommandRepository
 import com.example.mdmbackend.repository.DeviceRepository
+import io.ktor.http.*
 import java.time.Instant
 import java.util.UUID
 
@@ -11,15 +13,27 @@ class DeviceCommandService(
     private val devices: DeviceRepository,
     private val commands: DeviceCommandRepository
 ) {
+    /**
+     * ✅ adminCreate() - Throw HttpException(404) nếu device không tồn tại
+     */
     fun adminCreate(deviceId: UUID, createdByUserId: UUID, req: AdminCreateCommandRequest): CommandView {
-        // ensure device exists
-        devices.findById(deviceId) ?: throw IllegalArgumentException("Device not found")
+        // Ensure device exists
+        devices.findById(deviceId) ?: throw HttpException(
+            HttpStatusCode.NotFound,
+            "Device not found"
+        )
         val rec = commands.create(deviceId, req.type, req.payload, createdByUserId)
         return rec.toView()
     }
 
+    /**
+     * ✅ adminList() - Throw HttpException(404) nếu device không tồn tại
+     */
     fun adminList(deviceId: UUID, status: String?, limit: Int, offset: Long): AdminListCommandsResponse {
-        devices.findById(deviceId) ?: throw IllegalArgumentException("Device not found")
+        devices.findById(deviceId) ?: throw HttpException(
+            HttpStatusCode.NotFound,
+            "Device not found"
+        )
         val st = status?.let { CommandStatus.valueOf(it.uppercase()) }
         val (items, total) = commands.list(deviceId, st, limit, offset)
         return AdminListCommandsResponse(items.map { it.toView() }, total)
@@ -27,6 +41,7 @@ class DeviceCommandService(
 
     fun devicePoll(deviceCode: String, sessionDeviceCode: String?, limit: Int, leaseSeconds: Long = 60): DevicePollCommandsResponse {
         if (sessionDeviceCode == null || sessionDeviceCode != deviceCode) {
+            // ✅ Throw HttpException(409) nếu mismatch hoặc sessionDeviceCode null
             throw IllegalStateException("DeviceCode mismatch with session")
         }
         val device = devices.findByDeviceCode(deviceCode) ?: throw IllegalArgumentException("Device not found")
@@ -40,6 +55,7 @@ class DeviceCommandService(
 
     fun deviceAck(req: DeviceAckCommandRequest, sessionDeviceCode: String?): DeviceAckCommandResponse {
         if (sessionDeviceCode == null || sessionDeviceCode != req.deviceCode) {
+            // ✅ Throw IllegalStateException(409) nếu mismatch hoặc sessionDeviceCode null
             throw IllegalStateException("DeviceCode mismatch with session")
         }
         val device = devices.findByDeviceCode(req.deviceCode) ?: throw IllegalArgumentException("Device not found")
@@ -59,7 +75,7 @@ class DeviceCommandService(
     }
 }
 
-// mapping helpers
+// ✅ mapping helpers
 private fun com.example.mdmbackend.repository.CommandRecord.toView(): CommandView = CommandView(
     id = id.toString(),
     deviceId = deviceId.toString(),

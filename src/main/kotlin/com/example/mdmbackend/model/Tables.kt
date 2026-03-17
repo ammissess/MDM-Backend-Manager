@@ -13,18 +13,6 @@ object UsersTable : UUIDTable("users") {
     val createdAt = timestamp("created_at").clientDefault { Instant.now() }
 }
 
-/*object SessionsTable : Table("sessions") {
-    val token = uuid("token")
-
-    // ✅ FK tới UUIDTable: dùng reference(...)
-    val userId = reference("user_id", UsersTable, onDelete = ReferenceOption.CASCADE)
-
-    val expiresAt = timestamp("expires_at")
-    val createdAt = timestamp("created_at").clientDefault { Instant.now() }
-
-    override val primaryKey = PrimaryKey(token)
-}*/
-
 object SessionsTable : Table("sessions") {
     val token = uuid("token")
     val userId = reference("user_id", UsersTable, onDelete = ReferenceOption.CASCADE)
@@ -37,7 +25,6 @@ object SessionsTable : Table("sessions") {
 object ProfilesTable : UUIDTable("profiles") {
     val userCode = varchar("user_code", 64).uniqueIndex()
     val name = varchar("name", 128)
-    //val description = text("description").default("")
     val description = varchar("description", length = 2048).default("")
 
     // Policy flags
@@ -56,9 +43,7 @@ object ProfilesTable : UUIDTable("profiles") {
 }
 
 object ProfileAllowedAppsTable : Table("profile_allowed_apps") {
-    // ✅ FK tới UUIDTable: dùng reference(...)
     val profileId = reference("profile_id", ProfilesTable, onDelete = ReferenceOption.CASCADE)
-
     val packageName = varchar("package_name", 255)
 
     override val primaryKey = PrimaryKey(profileId, packageName)
@@ -67,28 +52,34 @@ object ProfileAllowedAppsTable : Table("profile_allowed_apps") {
 object DevicesTable : UUIDTable("devices") {
     val deviceCode = varchar("device_code", 128).uniqueIndex()
 
-    // ✅ thêm 2 cột mới
+    // Device status & unlock
     val status = enumerationByName("status", 16, DeviceStatus::class).default(DeviceStatus.LOCKED)
     val unlockPassHash = varchar("unlock_pass_hash", 120).default("")
 
-    // ✅ FK nullable tới UUIDTable: reference(...).nullable()
+    // Profile link
     val profileId = reference("profile_id", ProfilesTable, onDelete = ReferenceOption.SET_NULL).nullable()
 
+    // Device info
+    val androidVersion = varchar("android_version", 64).default("")
     val manufacturer = varchar("manufacturer", 128).default("")
     val model = varchar("model", 128).default("")
+    val imei = varchar("imei", 64).default("")
     val serial = varchar("serial", 128).default("")
     val sdkInt = integer("sdk_int").default(0)
+
+    // Device telemetry
+    val batteryLevel = integer("battery_level").default(-1)
+    val isCharging = bool("is_charging").default(false)
+    val wifiEnabled = bool("wifi_enabled").default(false)
 
     val createdAt = timestamp("created_at").clientDefault { Instant.now() }
     val lastSeenAt = timestamp("last_seen_at").clientDefault { Instant.now() }
 }
 
 object DeviceEventsTable : UUIDTable("device_events") {
-    // ✅ FK tới UUIDTable: dùng reference(...)
     val deviceId = reference("device_id", DevicesTable, onDelete = ReferenceOption.CASCADE)
 
     val type = varchar("type", 64)
-    //val payload = text("payload").default("{}")
     val payload = varchar("payload", length = 8192).default("{}")
 
     val createdAt = timestamp("created_at").clientDefault { Instant.now() }

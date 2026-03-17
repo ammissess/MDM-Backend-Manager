@@ -16,6 +16,7 @@ version = "0.1.0"
 repositories { mavenCentral() }
 
 dependencies {
+    // Ktor Server
     implementation("io.ktor:ktor-server-core-jvm:$ktorVersion")
     implementation("io.ktor:ktor-server-netty-jvm:$ktorVersion")
     implementation("io.ktor:ktor-server-content-negotiation-jvm:$ktorVersion")
@@ -25,27 +26,31 @@ dependencies {
     implementation("io.ktor:ktor-server-cors-jvm:$ktorVersion")
     implementation("io.ktor:ktor-server-auth-jvm:$ktorVersion")
 
+    // Database
     implementation("com.zaxxer:HikariCP:5.1.0")
     implementation("org.jetbrains.exposed:exposed-core:$exposedVersion")
     implementation("org.jetbrains.exposed:exposed-dao:$exposedVersion")
     implementation("org.jetbrains.exposed:exposed-jdbc:$exposedVersion")
     implementation("org.jetbrains.exposed:exposed-java-time:$exposedVersion")
-
-    // (tuỳ chọn) bỏ H2 nếu không dùng nữa
-    //runtimeOnly("com.h2database:h2:2.2.224")
-
-    // (tuỳ chọn) bỏ postgres nếu không dùng
-    //runtimeOnly("org.postgresql:postgresql:42.7.4")
-    //mysql
     runtimeOnly("com.mysql:mysql-connector-j:9.0.0")
 
+    // Security
     implementation("org.mindrot:jbcrypt:0.4")
 
-    //fix FLF4J issue
+    // Logging
     implementation("ch.qos.logback:logback-classic:1.5.18")
 
-    testImplementation(kotlin("test"))
+    // Testing
+/*    testImplementation(kotlin("test"))
     testImplementation("io.ktor:ktor-server-tests-jvm:$ktorVersion")
+    testImplementation("io.ktor:ktor-client-content-negotiation-jvm:$ktorVersion")
+    testImplementation("io.ktor:ktor-serialization-kotlinx-json-jvm:$ktorVersion")*/
+
+    // Testing
+    testImplementation(kotlin("test"))
+    testImplementation("io.ktor:ktor-server-test-host:$ktorVersion")
+    testImplementation("io.ktor:ktor-client-content-negotiation-jvm:$ktorVersion")
+    testImplementation("io.ktor:ktor-serialization-kotlinx-json-jvm:$ktorVersion")
 }
 
 application {

@@ -6,6 +6,7 @@ import com.zaxxer.hikari.HikariDataSource
 import org.jetbrains.exposed.sql.Database
 import org.jetbrains.exposed.sql.SchemaUtils
 import org.jetbrains.exposed.sql.transactions.transaction
+import com.example.mdmbackend.model.DeviceCommandsTable
 
 object DatabaseFactory {
     private var dataSource: HikariDataSource? = null
@@ -34,7 +35,7 @@ object DatabaseFactory {
                 DevicePrivateInfoTable,
                 DeviceAppUsageTable,
                 DeviceEventsTable,
-                DeviceCommandsTable,
+                DeviceCommandsTable,  // ✅ thêm để tạo bảng lệnh
             )
         }
     }

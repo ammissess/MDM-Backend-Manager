@@ -35,4 +35,28 @@ class DevicePrivateInfoRepository {
         // update lastSeenAt luôn
         DevicesTable.update({ DevicesTable.id eq deviceId }) { it[lastSeenAt] = now }
     }
+
+    fun getLatestByDeviceId(deviceId: UUID): LocationRecord? = transaction {
+        DevicePrivateInfoTable.selectAll()
+            .where { DevicePrivateInfoTable.deviceId eq deviceId }
+            .limit(1)
+            .map { row ->
+                LocationRecord(
+                    deviceId = deviceId,
+                    latitude = row[DevicePrivateInfoTable.latitude],
+                    longitude = row[DevicePrivateInfoTable.longitude],
+                    accuracyMeters = row[DevicePrivateInfoTable.accuracyMeters],
+                    updatedAt = row[DevicePrivateInfoTable.updatedAt],
+                )
+            }
+            .firstOrNull()
+    }
+
+    data class LocationRecord(
+        val deviceId: UUID,
+        val latitude: Double,
+        val longitude: Double,
+        val accuracyMeters: Double,
+        val updatedAt: java.time.Instant,
+    )
 }

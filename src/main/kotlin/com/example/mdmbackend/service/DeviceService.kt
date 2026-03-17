@@ -13,6 +13,7 @@ import com.example.mdmbackend.repository.DeviceAppUsageRepository
 import com.example.mdmbackend.repository.DevicePrivateInfoRepository
 import com.example.mdmbackend.repository.DeviceRepository
 import com.example.mdmbackend.repository.ProfileRepository
+import com.example.mdmbackend.util.PasswordHasher
 import java.time.Instant
 
 data class UnlockResult(
@@ -28,8 +29,15 @@ class DeviceService(
     private val usage: DeviceAppUsageRepository,
 ) {
 
+    /**
+     * ✅ register() - Sửa để truyền defaultUnlockPassHash
+     * (Cần inject AppConfig nếu muốn lấy từ config, tạm thời hardcode)
+     */
     fun register(req: DeviceRegisterRequest): DeviceRegisterResponse {
-        // upsert device basic + telemetry (bạn sẽ map thêm fields trong repo)
+        // TODO: Inject AppConfig vào constructor để lấy defaultDeviceUnlockPass
+        // Tạm thời: hardcode hoặc truyền từ ngoài
+        val defaultPassHash = PasswordHasher.hash("1111")
+
         val record = devices.upsertRegister(
             deviceCode = req.deviceCode,
             androidVersion = req.androidVersion,
@@ -41,6 +49,7 @@ class DeviceService(
             batteryLevel = req.batteryLevel,
             isCharging = req.isCharging,
             wifiEnabled = req.wifiEnabled,
+            defaultUnlockPassHash = defaultPassHash,
         )
 
         return DeviceRegisterResponse(
@@ -59,7 +68,6 @@ class DeviceService(
 
     fun getConfigByUserCode(userCode: String) =
         profiles.findByUserCode(userCode)?.let { p ->
-            // map sang DeviceConfigResponse như bạn đang làm
             profiles.toDeviceConfigResponse(p)
         }
 
@@ -84,7 +92,6 @@ class DeviceService(
             lat = req.latitude,
             lon = req.longitude,
             acc = req.accuracyMeters
-            // nếu repo có at thì thêm: , at = Instant.now()
         )
         return true
     }
@@ -106,15 +113,14 @@ class DeviceService(
 
         val rows = req.items.map {
             DeviceAppUsageRepository.UsageRow(
-            packageName = it.packageName,
-            startedAt = Instant.ofEpochMilli(it.startedAtEpochMillis),
-            endedAt = Instant.ofEpochMilli(it.endedAtEpochMillis),
-            durationMs = it.durationMs
-        )
+                packageName = it.packageName,
+                startedAt = Instant.ofEpochMilli(it.startedAtEpochMillis),
+                endedAt = Instant.ofEpochMilli(it.endedAtEpochMillis),
+                durationMs = it.durationMs
+            )
         }
 
         val inserted = usage.insertUsageBatch(device.id, rows)
         return UsageBatchReportResponse(ok = true, inserted = inserted)
     }
-
 }

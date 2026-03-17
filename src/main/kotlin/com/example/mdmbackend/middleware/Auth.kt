@@ -14,6 +14,7 @@ data class UserPrincipal(
     val userId: UUID,
     val username: String,
     val role: Role,
+    val deviceCode: String? = null,
 ) : Principal
 
 fun Application.configureAuth(cfg: AppConfig) {
@@ -35,8 +36,10 @@ fun Application.configureAuth(cfg: AppConfig) {
                     return@authenticate null
                 }
 
+//                val user = users.findById(session.userId) ?: return@authenticate null
+//                UserPrincipal(user.id, user.username, user.role)
                 val user = users.findById(session.userId) ?: return@authenticate null
-                UserPrincipal(user.id, user.username, user.role)
+                UserPrincipal(user.id, user.username, user.role, session.deviceCode)
             }
             realm = "mdmappbasic"
         }

@@ -1,39 +1,36 @@
 package com.example.mdmbackend.routes
 
-import com.example.mdmbackend.dto.DeviceLinkRequest
-import com.example.mdmbackend.dto.ProfileCreateRequest
-import com.example.mdmbackend.dto.ProfileUpdateRequest
-// Import thêm DTO cho command
-// import com.example.mdmbackend.dto.AdminCreateCommandRequest
+import com.example.mdmbackend.dto.*
 import com.example.mdmbackend.middleware.UserPrincipal
+import com.example.mdmbackend.middleware.HttpException
 import com.example.mdmbackend.model.Role
-import com.example.mdmbackend.service.DeviceService
-import com.example.mdmbackend.service.ProfileService
+import com.example.mdmbackend.repository.DeviceAppUsageRepository
+import com.example.mdmbackend.repository.DeviceCommandRepository
+import com.example.mdmbackend.repository.DevicePrivateInfoRepository
 import com.example.mdmbackend.repository.DeviceRepository
 import com.example.mdmbackend.repository.ProfileRepository
 import com.example.mdmbackend.service.AdminDeviceService
-// Cần import thêm CommandService (nếu có)
-// import com.example.mdmbackend.service.CommandService
+import com.example.mdmbackend.service.DeviceCommandService
+import com.example.mdmbackend.service.ProfileService
 import io.ktor.http.*
 import io.ktor.server.application.*
 import io.ktor.server.auth.*
 import io.ktor.server.request.*
 import io.ktor.server.response.*
 import io.ktor.server.routing.*
+import java.time.Instant
 import java.util.UUID
 
-fun Route.adminRoutes(
-    // Tốt nhất bạn nên inject các service vào đây thay vì khởi tạo cứng bên trong hàm
-    // commandService: CommandService
-) {
+fun Route.adminRoutes() {
     val profileRepo = ProfileRepository()
     val deviceRepo = DeviceRepository()
+    val commandRepo = DeviceCommandRepository()
+    val privateInfoRepo = DevicePrivateInfoRepository()
+    val usageRepo = DeviceAppUsageRepository()
 
     val profiles = ProfileService(profileRepo)
     val devices = AdminDeviceService(deviceRepo, profileRepo)
-
-    // Giả lập khởi tạo CommandService (Bạn cần điều chỉnh lại theo logic code thực tế của bạn)
-    // val commandService = CommandService(...)
+    val commandService = DeviceCommandService(deviceRepo, commandRepo)
 
     authenticate("session") {
         route("/admin") {
@@ -59,46 +56,59 @@ fun Route.adminRoutes(
                     call.respond(HttpStatusCode.Created, profiles.create(req))
                 }
 
+                // ✅ GET /{id} - Parse UUID + 404 if not found
                 get("/{id}") {
                     val principal = call.principal<UserPrincipal>()!!
                     if (principal.role != Role.ADMIN) {
                         call.respond(HttpStatusCode.Forbidden, mapOf("error" to "Forbidden"))
                         return@get
                     }
-                    val id = UUID.fromString(call.parameters["id"]!!)
-                    val p = profiles.get(id)
-                    if (p == null) {
-                        call.respond(HttpStatusCode.NotFound, mapOf("error" to "Not found"))
-                        return@get
+                    val id = runCatching {
+                        UUID.fromString(call.parameters["id"]!!)
+                    }.getOrElse { _ ->
+                        throw HttpException(HttpStatusCode.BadRequest, "Invalid UUID format: ${call.parameters["id"]}")
+                    }
+                    val p = profiles.get(id) ?: run {
+                        throw HttpException(HttpStatusCode.NotFound, "Profile not found")
                     }
                     call.respond(p)
                 }
 
+                // ✅ PUT /{id} - Parse UUID + 404 if not found
                 put("/{id}") {
                     val principal = call.principal<UserPrincipal>()!!
                     if (principal.role != Role.ADMIN) {
                         call.respond(HttpStatusCode.Forbidden, mapOf("error" to "Forbidden"))
                         return@put
                     }
-                    val id = UUID.fromString(call.parameters["id"]!!)
+                    val id = runCatching {
+                        UUID.fromString(call.parameters["id"]!!)
+                    }.getOrElse { _ ->
+                        throw HttpException(HttpStatusCode.BadRequest, "Invalid UUID format: ${call.parameters["id"]}")
+                    }
                     val req = call.receive<ProfileUpdateRequest>()
-                    val p = profiles.update(id, req)
-                    if (p == null) {
-                        call.respond(HttpStatusCode.NotFound, mapOf("error" to "Not found"))
-                        return@put
+                    val p = profiles.update(id, req) ?: run {
+                        throw HttpException(HttpStatusCode.NotFound, "Profile not found")
                     }
                     call.respond(p)
                 }
 
+                // ✅ DELETE /{id} - Parse UUID + 404 if not found
                 delete("/{id}") {
                     val principal = call.principal<UserPrincipal>()!!
                     if (principal.role != Role.ADMIN) {
                         call.respond(HttpStatusCode.Forbidden, mapOf("error" to "Forbidden"))
                         return@delete
                     }
-                    val id = UUID.fromString(call.parameters["id"]!!)
-                    val ok = profiles.delete(id)
-                    call.respond(mapOf("ok" to ok))
+                    val id = runCatching {
+                        UUID.fromString(call.parameters["id"]!!)
+                    }.getOrElse { _ ->
+                        throw HttpException(HttpStatusCode.BadRequest, "Invalid UUID format: ${call.parameters["id"]}")
+                    }
+                    if (!profiles.delete(id)) {
+                        throw HttpException(HttpStatusCode.NotFound, "Profile not found")
+                    }
+                    call.respond(mapOf("ok" to true))
                 }
 
                 put("/{id}/allowed-apps") {
@@ -107,12 +117,14 @@ fun Route.adminRoutes(
                         call.respond(HttpStatusCode.Forbidden, mapOf("error" to "Forbidden"))
                         return@put
                     }
-                    val id = UUID.fromString(call.parameters["id"]!!)
+                    val id = runCatching {
+                        UUID.fromString(call.parameters["id"]!!)
+                    }.getOrElse { _ ->
+                        throw HttpException(HttpStatusCode.BadRequest, "Invalid UUID format: ${call.parameters["id"]}")
+                    }
                     val apps = call.receive<List<String>>()
-                    val p = profiles.setAllowedApps(id, apps)
-                    if (p == null) {
-                        call.respond(HttpStatusCode.NotFound, mapOf("error" to "Not found"))
-                        return@put
+                    val p = profiles.setAllowedApps(id, apps) ?: run {
+                        throw HttpException(HttpStatusCode.NotFound, "Profile not found")
                     }
                     call.respond(p)
                 }
@@ -129,89 +141,216 @@ fun Route.adminRoutes(
                     call.respond(devices.list())
                 }
 
+                // ✅ GET /{id} - Parse UUID + 404 if not found
+                get("/{id}") {
+                    val principal = call.principal<UserPrincipal>()!!
+                    if (principal.role != Role.ADMIN) {
+                        call.respond(HttpStatusCode.Forbidden, mapOf("error" to "Forbidden"))
+                        return@get
+                    }
+                    val id = runCatching {
+                        UUID.fromString(call.parameters["id"]!!)
+                    }.getOrElse { _ ->
+                        throw HttpException(HttpStatusCode.BadRequest, "Invalid UUID format: ${call.parameters["id"]}")
+                    }
+                    val d = devices.getById(id) ?: run {
+                        throw HttpException(HttpStatusCode.NotFound, "Device not found")
+                    }
+                    call.respond(d)
+                }
+
                 put("/{id}/link") {
                     val principal = call.principal<UserPrincipal>()!!
                     if (principal.role != Role.ADMIN) {
                         call.respond(HttpStatusCode.Forbidden, mapOf("error" to "Forbidden"))
                         return@put
                     }
-                    val id = UUID.fromString(call.parameters["id"]!!)
+                    val id = runCatching {
+                        UUID.fromString(call.parameters["id"]!!)
+                    }.getOrElse { _ ->
+                        throw HttpException(HttpStatusCode.BadRequest, "Invalid UUID format: ${call.parameters["id"]}")
+                    }
                     val body = call.receive<DeviceLinkRequest>()
-                    val userCode = body.userCode
-                    val d = devices.linkDeviceToUserCode(id, userCode)
-
-                    if (d == null) {
-                        call.respond(HttpStatusCode.NotFound, mapOf("error" to "Device not found"))
-                        return@put
+                    val d = devices.linkDeviceToUserCode(id, body.userCode) ?: run {
+                        throw HttpException(HttpStatusCode.NotFound, "Device not found")
                     }
                     call.respond(d)
                 }
 
+                // ✅ POST /{id}/lock - Parse UUID + 404 if not found
+                post("/{id}/lock") {
+                    val principal = call.principal<UserPrincipal>()!!
+                    if (principal.role != Role.ADMIN) {
+                        call.respond(HttpStatusCode.Forbidden, mapOf("error" to "Forbidden"))
+                        return@post
+                    }
+                    val id = runCatching {
+                        UUID.fromString(call.parameters["id"]!!)
+                    }.getOrElse { _ ->
+                        throw HttpException(HttpStatusCode.BadRequest, "Invalid UUID format: ${call.parameters["id"]}")
+                    }
+                    if (!devices.lockDevice(id)) {
+                        throw HttpException(HttpStatusCode.NotFound, "Device not found")
+                    }
+                    call.respond(mapOf("ok" to true))
+                }
+
+                // ✅ POST /{id}/reset-unlock-pass - Parse UUID + 404 if not found
+                post("/{id}/reset-unlock-pass") {
+                    val principal = call.principal<UserPrincipal>()!!
+                    if (principal.role != Role.ADMIN) {
+                        call.respond(HttpStatusCode.Forbidden, mapOf("error" to "Forbidden"))
+                        return@post
+                    }
+                    val id = runCatching {
+                        UUID.fromString(call.parameters["id"]!!)
+                    }.getOrElse { _ ->
+                        throw HttpException(HttpStatusCode.BadRequest, "Invalid UUID format: ${call.parameters["id"]}")
+                    }
+                    val req = call.receive<AdminResetUnlockPassRequest>()
+                    if (!devices.resetUnlockPass(id, req.newPassword)) {
+                        throw HttpException(HttpStatusCode.NotFound, "Device not found")
+                    }
+                    call.respond(mapOf("ok" to true))
+                }
+
                 // ===== Commands =====
                 route("/{id}/commands") {
+                    // ✅ POST - Create command, 404 device not found, 400 invalid payload
                     post {
                         val principal = call.principal<UserPrincipal>()!!
                         if (principal.role != Role.ADMIN) {
                             call.respond(HttpStatusCode.Forbidden, mapOf("error" to "Forbidden"))
                             return@post
                         }
-                        val deviceId = UUID.fromString(call.parameters["id"]!!)
-                        // val req = call.receive<AdminCreateCommandRequest>()
-                        // call.respond(HttpStatusCode.Created, commandService.adminCreate(deviceId, principal.userId, req))
+                        val deviceId = runCatching {
+                            UUID.fromString(call.parameters["id"]!!)
+                        }.getOrElse { _ ->
+                            throw HttpException(HttpStatusCode.BadRequest, "Invalid UUID format: ${call.parameters["id"]}")
+                        }
+                        val req = call.receive<AdminCreateCommandRequest>()
 
-                        // Placeholder response (Xóa khi implement thật)
-                        call.respond(HttpStatusCode.Created, mapOf("message" to "Command created"))
+                        val result = runCatching {
+                            commandService.adminCreate(deviceId, principal.userId, req)
+                        }.getOrElse { e ->
+                            when (e) {
+                                is HttpException -> throw e
+                                is IllegalArgumentException -> throw HttpException(HttpStatusCode.BadRequest, e.message ?: "Bad request")
+                                else -> throw e
+                            }
+                        }
+                        call.respond(HttpStatusCode.Created, result)
                     }
+
+                    // ✅ GET - List commands, 404 device not found, 400 invalid status enum
                     get {
                         val principal = call.principal<UserPrincipal>()!!
                         if (principal.role != Role.ADMIN) {
                             call.respond(HttpStatusCode.Forbidden, mapOf("error" to "Forbidden"))
                             return@get
                         }
-                        val deviceId = UUID.fromString(call.parameters["id"]!!)
+                        val deviceId = runCatching {
+                            UUID.fromString(call.parameters["id"]!!)
+                        }.getOrElse { _ ->
+                            throw HttpException(HttpStatusCode.BadRequest, "Invalid UUID format: ${call.parameters["id"]}")
+                        }
                         val status = call.request.queryParameters["status"]
+
+                        // ✅ Validate status enum if provided
+                        if (status != null) {
+                            runCatching {
+                                com.example.mdmbackend.model.CommandStatus.valueOf(status.uppercase())
+                            }.getOrElse { _ ->
+                                throw HttpException(HttpStatusCode.BadRequest, "Invalid status enum: $status")
+                            }
+                        }
+
                         val limit = call.request.queryParameters["limit"]?.toIntOrNull() ?: 50
                         val offset = call.request.queryParameters["offset"]?.toLongOrNull() ?: 0L
 
-                        // call.respond(commandService.adminList(deviceId, status, limit, offset))
-
-                        // Placeholder response (Xóa khi implement thật)
-                        call.respond(mapOf("message" to "Command list"))
+                        val result = runCatching {
+                            commandService.adminList(deviceId, status, limit, offset)
+                        }.getOrElse { e ->
+                            when (e) {
+                                is HttpException -> throw e
+                                is IllegalArgumentException -> throw HttpException(HttpStatusCode.BadRequest, e.message ?: "Bad request")
+                                else -> throw e
+                            }
+                        }
+                        call.respond(result)
                     }
                 }
 
-                // ===== Telemetry =====
-                get("/{id}/location") {
+                // ✅ GET /{id}/location/latest - Parse UUID + 404 if not found
+                get("/{id}/location/latest") {
                     val principal = call.principal<UserPrincipal>()!!
                     if (principal.role != Role.ADMIN) {
                         call.respond(HttpStatusCode.Forbidden, mapOf("error" to "Forbidden"))
                         return@get
                     }
-                    val deviceId = UUID.fromString(call.parameters["id"]!!)
-                    // Xử lý logic lấy location ở đây
-                    call.respond(mapOf("message" to "Location data for device $deviceId"))
-                }
-
-                get("/{id}/usage") {
-                    val principal = call.principal<UserPrincipal>()!!
-                    if (principal.role != Role.ADMIN) {
-                        call.respond(HttpStatusCode.Forbidden, mapOf("error" to "Forbidden"))
-                        return@get
+                    val deviceId = runCatching {
+                        UUID.fromString(call.parameters["id"]!!)
+                    }.getOrElse { _ ->
+                        throw HttpException(HttpStatusCode.BadRequest, "Invalid UUID format: ${call.parameters["id"]}")
                     }
-                    val deviceId = UUID.fromString(call.parameters["id"]!!)
-                    // Xử lý logic lấy usage ở đây
-                    call.respond(mapOf("message" to "Usage data for device $deviceId"))
+                    val loc = privateInfoRepo.getLatestByDeviceId(deviceId) ?: run {
+                        throw HttpException(HttpStatusCode.NotFound, "No location data")
+                    }
+                    call.respond(AdminLatestLocationResponse(
+                        deviceId = deviceId.toString(),
+                        latitude = loc.latitude,
+                        longitude = loc.longitude,
+                        accuracyMeters = loc.accuracyMeters,
+                        updatedAtEpochMillis = loc.updatedAt.toEpochMilli(),
+                    ))
                 }
 
+                // ✅ GET /{id}/events - Parse UUID
                 get("/{id}/events") {
                     val principal = call.principal<UserPrincipal>()!!
                     if (principal.role != Role.ADMIN) {
                         call.respond(HttpStatusCode.Forbidden, mapOf("error" to "Forbidden"))
                         return@get
                     }
-                    val deviceId = UUID.fromString(call.parameters["id"]!!)
-                    // Xử lý logic lấy events ở đây
-                    call.respond(mapOf("message" to "Events data for device $deviceId"))
+                    val deviceId = runCatching {
+                        UUID.fromString(call.parameters["id"]!!)
+                    }.getOrElse { _ ->
+                        throw HttpException(HttpStatusCode.BadRequest, "Invalid UUID format: ${call.parameters["id"]}")
+                    }
+                    val limit = call.request.queryParameters["limit"]?.toIntOrNull() ?: 50
+                    val events = deviceRepo.listEvents(deviceId, limit)
+                    call.respond(events.map { e ->
+                        AdminDeviceEventView(
+                            id = e.id.toString(),
+                            deviceId = e.deviceId.toString(),
+                            type = e.type,
+                            payload = e.payload,
+                            createdAtEpochMillis = e.createdAt.toEpochMilli(),
+                        )
+                    })
+                }
+
+                // ✅ GET /{id}/usage/summary - Parse UUID
+                get("/{id}/usage/summary") {
+                    val principal = call.principal<UserPrincipal>()!!
+                    if (principal.role != Role.ADMIN) {
+                        call.respond(HttpStatusCode.Forbidden, mapOf("error" to "Forbidden"))
+                        return@get
+                    }
+                    val deviceId = runCatching {
+                        UUID.fromString(call.parameters["id"]!!)
+                    }.getOrElse { _ ->
+                        throw HttpException(HttpStatusCode.BadRequest, "Invalid UUID format: ${call.parameters["id"]}")
+                    }
+                    val from = call.request.queryParameters["fromEpochMillis"]?.toLongOrNull()?.let { Instant.ofEpochMilli(it) }
+                    val to = call.request.queryParameters["toEpochMillis"]?.toLongOrNull()?.let { Instant.ofEpochMilli(it) }
+                    val items = usageRepo.summaryByDeviceId(deviceId, from, to)
+                    call.respond(AdminUsageSummaryResponse(
+                        deviceId = deviceId.toString(),
+                        fromEpochMillis = from?.toEpochMilli(),
+                        toEpochMillis = to?.toEpochMilli(),
+                        items = items.map { AdminUsageSummaryItem(it.packageName, it.totalDurationMs, it.sessions) },
+                    ))
                 }
             }
         }
