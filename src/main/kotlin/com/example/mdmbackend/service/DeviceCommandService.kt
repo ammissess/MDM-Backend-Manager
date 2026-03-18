@@ -1,3 +1,5 @@
+@file:JvmName("CommandDeliveryServiceKt")
+
 package com.example.mdmbackend.service
 
 import com.example.mdmbackend.dto.*
@@ -11,37 +13,68 @@ import java.util.UUID
 
 class DeviceCommandService(
     private val devices: DeviceRepository,
-    private val commands: DeviceCommandRepository
+    private val commands: DeviceCommandRepository,
+    private val eventBus: EventBus = EventBusHolder.bus,
 ) {
-    /**
-     * ✅ adminCreate() - Throw HttpException(404) nếu device không tồn tại
-     */
     fun adminCreate(deviceId: UUID, createdByUserId: UUID, req: AdminCreateCommandRequest): CommandView {
-        // Ensure device exists
-        devices.findById(deviceId) ?: throw HttpException(
-            HttpStatusCode.NotFound,
-            "Device not found"
+        devices.findById(deviceId) ?: throw HttpException(HttpStatusCode.NotFound, "Device not found")
+        val rec = commands.create(deviceId, req.type, req.payload, createdByUserId, req.ttlSeconds)
+
+        eventBus.publish(
+            CommandCreatedEvent(
+                commandId = rec.id,
+                deviceId = deviceId,
+                type = req.type,
+                ttlSeconds = req.ttlSeconds,
+                actorUserId = createdByUserId
+            )
         )
-        val rec = commands.create(deviceId, req.type, req.payload, createdByUserId)
+
         return rec.toView()
     }
 
-    /**
-     * ✅ adminList() - Throw HttpException(404) nếu device không tồn tại
-     */
     fun adminList(deviceId: UUID, status: String?, limit: Int, offset: Long): AdminListCommandsResponse {
-        devices.findById(deviceId) ?: throw HttpException(
-            HttpStatusCode.NotFound,
-            "Device not found"
-        )
+        devices.findById(deviceId) ?: throw HttpException(HttpStatusCode.NotFound, "Device not found")
         val st = status?.let { CommandStatus.valueOf(it.uppercase()) }
         val (items, total) = commands.list(deviceId, st, limit, offset)
         return AdminListCommandsResponse(items.map { it.toView() }, total)
     }
 
-    fun devicePoll(deviceCode: String, sessionDeviceCode: String?, limit: Int, leaseSeconds: Long = 60): DevicePollCommandsResponse {
+    fun adminCancel(
+        deviceId: UUID,
+        commandId: UUID,
+        cancelledByUserId: UUID,
+        req: AdminCancelCommandRequest,
+    ): AdminCancelCommandResponse {
+        devices.findById(deviceId) ?: throw HttpException(HttpStatusCode.NotFound, "Device not found")
+
+        val updated = commands.cancel(
+            deviceId = deviceId,
+            commandId = commandId,
+            cancelledByUserId = cancelledByUserId,
+            reason = req.reason,
+            errorCode = req.errorCode,
+            now = Instant.now(),
+        ) ?: throw HttpException(HttpStatusCode.Conflict, "Command cannot be cancelled in current state")
+
+        return AdminCancelCommandResponse(
+            ok = true,
+            status = updated.status.name,
+            cancelledAtEpochMillis = updated.cancelledAt!!.toEpochMilli(),
+        )
+    }
+
+    /**
+     * NEW: delivery-layer helper cho PollingDeliveryStrategy.
+     * Giữ behavior cũ của /poll.
+     */
+    fun leasePendingForPolling(
+        deviceCode: String,
+        sessionDeviceCode: String?,
+        limit: Int,
+        leaseSeconds: Long = 60
+    ): DevicePollCommandsResponse {
         if (sessionDeviceCode == null || sessionDeviceCode != deviceCode) {
-            // ✅ Throw HttpException(409) nếu mismatch hoặc sessionDeviceCode null
             throw IllegalStateException("DeviceCode mismatch with session")
         }
         val device = devices.findByDeviceCode(deviceCode) ?: throw IllegalArgumentException("Device not found")
@@ -55,7 +88,6 @@ class DeviceCommandService(
 
     fun deviceAck(req: DeviceAckCommandRequest, sessionDeviceCode: String?): DeviceAckCommandResponse {
         if (sessionDeviceCode == null || sessionDeviceCode != req.deviceCode) {
-            // ✅ Throw IllegalStateException(409) nếu mismatch hoặc sessionDeviceCode null
             throw IllegalStateException("DeviceCode mismatch with session")
         }
         val device = devices.findByDeviceCode(req.deviceCode) ?: throw IllegalArgumentException("Device not found")
@@ -68,14 +100,20 @@ class DeviceCommandService(
             else -> throw IllegalArgumentException("Invalid result")
         }
 
-        val updated = commands.ack(device.id, cmdId, leaseToken, targetStatus, req.error, req.output)
-            ?: throw IllegalStateException("Lease mismatch or command not found")
+        val updated = commands.ack(
+            deviceId = device.id,
+            commandId = cmdId,
+            leaseToken = leaseToken,
+            resultStatus = targetStatus,
+            error = req.error,
+            errorCode = req.errorCode,
+            output = req.output,
+        ) ?: throw IllegalStateException("Lease mismatch or command not found")
 
         return DeviceAckCommandResponse(ok = true, status = updated.status.name)
     }
 }
 
-// ✅ mapping helpers
 private fun com.example.mdmbackend.repository.CommandRecord.toView(): CommandView = CommandView(
     id = id.toString(),
     deviceId = deviceId.toString(),
@@ -84,11 +122,16 @@ private fun com.example.mdmbackend.repository.CommandRecord.toView(): CommandVie
     status = status.name,
     createdByUserId = createdByUserId?.toString(),
     createdAtEpochMillis = createdAt.toEpochMilli(),
+    expiresAtEpochMillis = expiresAt?.toEpochMilli(),
     leasedAtEpochMillis = leasedAt?.toEpochMilli(),
     leaseToken = leaseToken?.toString(),
     leaseExpiresAtEpochMillis = leaseExpiresAt?.toEpochMilli(),
     ackedAtEpochMillis = ackedAt?.toEpochMilli(),
+    cancelledAtEpochMillis = cancelledAt?.toEpochMilli(),
+    cancelledByUserId = cancelledByUserId?.toString(),
+    cancelReason = cancelReason,
     error = error,
+    errorCode = errorCode,
     output = output,
 )
 
@@ -100,4 +143,5 @@ private fun com.example.mdmbackend.repository.CommandRecord.toLeasedDto(): Devic
     leaseToken = leaseToken!!.toString(),
     leaseExpiresAtEpochMillis = leaseExpiresAt!!.toEpochMilli(),
     createdAtEpochMillis = createdAt.toEpochMilli(),
+    expiresAtEpochMillis = expiresAt?.toEpochMilli(),
 )

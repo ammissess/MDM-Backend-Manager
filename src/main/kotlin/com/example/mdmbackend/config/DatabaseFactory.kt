@@ -7,6 +7,7 @@ import org.jetbrains.exposed.sql.Database
 import org.jetbrains.exposed.sql.SchemaUtils
 import org.jetbrains.exposed.sql.transactions.transaction
 import com.example.mdmbackend.model.DeviceCommandsTable
+import com.example.mdmbackend.model.AuditLogsTable
 
 object DatabaseFactory {
     private var dataSource: HikariDataSource? = null
@@ -35,7 +36,8 @@ object DatabaseFactory {
                 DevicePrivateInfoTable,
                 DeviceAppUsageTable,
                 DeviceEventsTable,
-                DeviceCommandsTable,  // ✅ thêm để tạo bảng lệnh
+                DeviceCommandsTable,
+                AuditLogsTable,
             )
         }
     }

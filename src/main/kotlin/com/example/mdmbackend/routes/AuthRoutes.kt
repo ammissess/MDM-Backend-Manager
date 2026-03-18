@@ -7,6 +7,7 @@ import com.example.mdmbackend.service.AuthService
 import com.example.mdmbackend.repository.SessionRepository
 import com.example.mdmbackend.repository.UserRepository
 import com.example.mdmbackend.middleware.UserPrincipal
+import com.example.mdmbackend.service.AuditService
 import io.ktor.http.*
 import io.ktor.server.application.*
 import io.ktor.server.auth.*
@@ -16,6 +17,7 @@ import io.ktor.server.routing.*
 
 fun Route.authRoutes(cfg: AppConfig) {
     val auth = AuthService(cfg, UserRepository(), SessionRepository())
+    val audit = AuditService()
 
     route("/auth") {
         post("/login") {
@@ -25,6 +27,17 @@ fun Route.authRoutes(cfg: AppConfig) {
                 call.respond(HttpStatusCode.Unauthorized, mapOf("error" to "Invalid credentials"))
                 return@post
             }
+
+            val actorType = if (result.role == "ADMIN") "ADMIN" else "DEVICE"
+            audit.log(
+                actorType = actorType,
+                actorDeviceCode = result.deviceCode,
+                action = "LOGIN",
+                targetType = "SESSION",
+                targetId = result.token.toString(),
+                payloadJson = """{"username":"${req.username}","role":"${result.role}"}"""
+            )
+
             call.respond(
                 LoginResponse(
                     token = result.token.toString(),
@@ -45,6 +58,17 @@ fun Route.authRoutes(cfg: AppConfig) {
                     return@post
                 }
                 val ok = runCatching { java.util.UUID.fromString(token) }.getOrNull()?.let { auth.logout(it) } ?: false
+
+                audit.log(
+                    actorType = principal.role.name,
+                    actorUserId = principal.userId,
+                    actorDeviceCode = principal.deviceCode,
+                    action = "LOGOUT",
+                    targetType = "SESSION",
+                    targetId = token,
+                    payloadJson = """{"ok":$ok,"username":"${principal.username}"}"""
+                )
+
                 call.respond(mapOf("ok" to ok, "user" to principal.username))
             }
         }

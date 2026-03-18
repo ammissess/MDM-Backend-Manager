@@ -9,6 +9,7 @@ import java.util.UUID
 class AdminDeviceService(
     private val devices: DeviceRepository,
     private val profiles: ProfileRepository,
+    private val eventBus: EventBus = EventBusHolder.bus,
 ) {
     fun list(): List<DeviceResponse> =
         devices.list().map { d -> d.toDeviceResponse() }
@@ -16,9 +17,20 @@ class AdminDeviceService(
     fun getById(id: UUID): DeviceResponse? =
         devices.findById(id)?.toDeviceResponse()
 
-    fun linkDeviceToUserCode(deviceId: UUID, userCode: String?): DeviceResponse? {
+    fun linkDeviceToUserCode(deviceId: UUID, userCode: String?, actorUserId: UUID? = null): DeviceResponse? {
         val profileId = userCode?.let { profiles.findByUserCode(it)?.id }
         val updated = devices.setProfile(deviceId, profileId) ?: return null
+
+        if (actorUserId != null) {
+            eventBus.publish(
+                ProfileLinkedEvent(
+                    deviceId = deviceId,
+                    userCode = userCode,
+                    actorUserId = actorUserId
+                )
+            )
+        }
+
         return updated.toDeviceResponse()
     }
 
@@ -29,30 +41,20 @@ class AdminDeviceService(
         return devices.resetUnlockPass(id, hash)
     }
 
-    /**
-     * ✅ toDeviceResponse() - Sửa để lấy giá trị thật từ DeviceRecord
-     * Không còn hardcode "", -1, false nữa
-     */
     private fun com.example.mdmbackend.repository.DeviceRecord.toDeviceResponse(): DeviceResponse =
         DeviceResponse(
             id = id.toString(),
             deviceCode = deviceCode,
             userCode = userCode,
-
-            // Device info - lấy từ thật DeviceRecord
             androidVersion = androidVersion,
             sdkInt = sdkInt,
             manufacturer = manufacturer,
             model = model,
             imei = imei,
             serial = serial,
-
-            // Telemetry - lấy từ thật DeviceRecord
             batteryLevel = batteryLevel,
             isCharging = isCharging,
             wifiEnabled = wifiEnabled,
-
-            // Status
             status = status,
             lastSeenAtEpochMillis = lastSeenAt.toEpochMilli()
         )

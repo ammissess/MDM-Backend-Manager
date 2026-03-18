@@ -4,6 +4,7 @@ import com.example.mdmbackend.model.*
 import org.jetbrains.exposed.dao.id.EntityID
 import org.jetbrains.exposed.sql.*
 import org.jetbrains.exposed.sql.SqlExpressionBuilder.eq
+import org.jetbrains.exposed.sql.SqlExpressionBuilder.greater
 import org.jetbrains.exposed.sql.SqlExpressionBuilder.lessEq
 import org.jetbrains.exposed.sql.transactions.transaction
 import java.time.Instant
@@ -17,19 +18,32 @@ data class CommandRecord(
     val status: CommandStatus,
     val createdByUserId: UUID?,
     val createdAt: Instant,
+    val expiresAt: Instant?,
     val leasedAt: Instant?,
     val leaseToken: UUID?,
     val leaseExpiresAt: Instant?,
     val ackedAt: Instant?,
+    val cancelledAt: Instant?,
+    val cancelReason: String?,
+    val cancelledByUserId: UUID?,
     val error: String?,
+    val errorCode: String?,
     val output: String?,
 )
 
 class DeviceCommandRepository {
 
-    fun create(deviceId: UUID, type: String, payload: String, createdByUserId: UUID?): CommandRecord = transaction {
+    fun create(
+        deviceId: UUID,
+        type: String,
+        payload: String,
+        createdByUserId: UUID?,
+        ttlSeconds: Long,
+    ): CommandRecord = transaction {
         val id = UUID.randomUUID()
         val now = Instant.now()
+        val expiresAt = now.plusSeconds(ttlSeconds.coerceAtLeast(1))
+
         DeviceCommandsTable.insert {
             it[DeviceCommandsTable.id] = id
             it[DeviceCommandsTable.deviceId] = EntityID(deviceId, DevicesTable)
@@ -37,6 +51,7 @@ class DeviceCommandRepository {
             it[DeviceCommandsTable.payload] = payload
             it[DeviceCommandsTable.status] = CommandStatus.PENDING
             it[DeviceCommandsTable.createdAt] = now
+            it[DeviceCommandsTable.expiresAt] = expiresAt
             it[DeviceCommandsTable.createdByUserId] = createdByUserId?.let { uid -> EntityID(uid, UsersTable) }
         }
         getById(id)!!
@@ -59,6 +74,12 @@ class DeviceCommandRepository {
                                 (DeviceCommandsTable.status eq CommandStatus.PENDING) or
                                         ((DeviceCommandsTable.status eq CommandStatus.SENT) and (DeviceCommandsTable.leaseExpiresAt lessEq now))
                                 )
+            }
+            .andWhere {
+                (DeviceCommandsTable.expiresAt.isNull()) or (DeviceCommandsTable.expiresAt greater now)
+            }
+            .andWhere {
+                DeviceCommandsTable.status neq CommandStatus.CANCELLED
             }
             .orderBy(DeviceCommandsTable.createdAt, SortOrder.ASC)
             .limit(1)
@@ -84,27 +105,54 @@ class DeviceCommandRepository {
         leaseToken: UUID,
         resultStatus: CommandStatus, // SUCCESS or FAILED
         error: String?,
+        errorCode: String?,
         output: String?,
         now: Instant = Instant.now()
     ): CommandRecord? = transaction {
         val current = getById(commandId) ?: return@transaction null
         if (current.deviceId != deviceId) return@transaction null
 
-        // idempotent: nếu đã final thì trả luôn
         if (current.status == CommandStatus.SUCCESS || current.status == CommandStatus.FAILED) return@transaction current
+        if (current.status == CommandStatus.CANCELLED) return@transaction null
+        if (current.expiresAt != null && !current.expiresAt.isAfter(now)) return@transaction null
 
-        // lease guard
         if (current.status != CommandStatus.SENT || current.leaseToken != leaseToken) return@transaction null
 
         DeviceCommandsTable.update({ DeviceCommandsTable.id eq EntityID(commandId, DeviceCommandsTable) }) {
             it[status] = resultStatus
             it[ackedAt] = now
             it[DeviceCommandsTable.error] = error
+            it[DeviceCommandsTable.errorCode] = if (resultStatus == CommandStatus.FAILED) errorCode else null
             it[DeviceCommandsTable.output] = output
         }
         getById(commandId)!!
     }
 
+    fun cancel(
+        deviceId: UUID,
+        commandId: UUID,
+        cancelledByUserId: UUID,
+        reason: String,
+        errorCode: String?,
+        now: Instant = Instant.now(),
+    ): CommandRecord? = transaction {
+        val current = getById(commandId) ?: return@transaction null
+        if (current.deviceId != deviceId) return@transaction null
+
+        if (current.status == CommandStatus.SUCCESS || current.status == CommandStatus.FAILED || current.status == CommandStatus.CANCELLED) {
+            return@transaction null
+        }
+
+        DeviceCommandsTable.update({ DeviceCommandsTable.id eq EntityID(commandId, DeviceCommandsTable) }) {
+            it[DeviceCommandsTable.status] = CommandStatus.CANCELLED
+            it[DeviceCommandsTable.cancelledAt] = now
+            it[DeviceCommandsTable.cancelReason] = reason
+            it[DeviceCommandsTable.cancelledByUserId] = EntityID(cancelledByUserId, UsersTable)
+            it[DeviceCommandsTable.errorCode] = errorCode
+        }
+
+        getById(commandId)!!
+    }
     fun list(deviceId: UUID, status: CommandStatus?, limit: Int, offset: Long): Pair<List<CommandRecord>, Long> = transaction {
         val base = DeviceCommandsTable.selectAll()
             .where { DeviceCommandsTable.deviceId eq EntityID(deviceId, DevicesTable) }
@@ -112,7 +160,6 @@ class DeviceCommandRepository {
 
         val total = base.count()
         val items = base.orderBy(DeviceCommandsTable.createdAt, SortOrder.DESC)
-            // .limit(limit, offset) lỗi phiên bản mới của JetBrains Exposed, truyền 2 tham số bị loại bỏ
             .limit(limit)
             .offset(offset)
             .map { mapRow(it) }
@@ -125,16 +172,20 @@ class DeviceCommandRepository {
             id = r[DeviceCommandsTable.id].value,
             deviceId = r[DeviceCommandsTable.deviceId].value,
             type = r[DeviceCommandsTable.type],
-            //payload = r[DeviceCommandsTable.payload],
-            payload = r[DeviceCommandsTable.payload] ?: "{}",   // ✅ FIX
+            payload = r[DeviceCommandsTable.payload] ?: "{}",
             status = r[DeviceCommandsTable.status],
             createdByUserId = r[DeviceCommandsTable.createdByUserId]?.value,
             createdAt = r[DeviceCommandsTable.createdAt],
+            expiresAt = r[DeviceCommandsTable.expiresAt],
             leasedAt = r[DeviceCommandsTable.leasedAt],
             leaseToken = r[DeviceCommandsTable.leaseToken],
             leaseExpiresAt = r[DeviceCommandsTable.leaseExpiresAt],
             ackedAt = r[DeviceCommandsTable.ackedAt],
+            cancelledAt = r[DeviceCommandsTable.cancelledAt],
+            cancelReason = r[DeviceCommandsTable.cancelReason],
+            cancelledByUserId = r[DeviceCommandsTable.cancelledByUserId]?.value,
             error = r[DeviceCommandsTable.error],
+            errorCode = r[DeviceCommandsTable.errorCode],
             output = r[DeviceCommandsTable.output],
         )
 }

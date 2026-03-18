@@ -16,7 +16,27 @@ fun Application.configureCors(cfg: AppConfig) {
         allowHeader(HttpHeaders.Authorization)
         allowHeader(HttpHeaders.ContentType)
 
-        // DEV: cho phép tất cả
-        anyHost()
+        val allowedHosts = cfg.cors.allowedHosts
+            .map { it.trim() }
+            .filter { it.isNotBlank() }
+
+        if (allowedHosts.any { it == "*" }) {
+            anyHost()
+            return@install
+        }
+
+        allowedHosts.forEach { raw ->
+            val normalized = raw
+                .removePrefix("http://")
+                .removePrefix("https://")
+                .trimEnd('/')
+
+            if (normalized.isBlank()) return@forEach
+
+            allowHost(
+                host = normalized,
+                schemes = listOf("http", "https")
+            )
+        }
     }
 }

@@ -20,6 +20,7 @@ import io.ktor.server.response.*
 import io.ktor.server.routing.*
 import java.time.Instant
 import java.util.UUID
+import com.example.mdmbackend.service.AuditService
 
 fun Route.adminRoutes() {
     val profileRepo = ProfileRepository()
@@ -31,11 +32,26 @@ fun Route.adminRoutes() {
     val profiles = ProfileService(profileRepo)
     val devices = AdminDeviceService(deviceRepo, profileRepo)
     val commandService = DeviceCommandService(deviceRepo, commandRepo)
+    val audit = AuditService()
 
     authenticate("session") {
         route("/admin") {
 
-            // ===== Profiles =====
+            get("/audit") {
+                val principal = call.principal<UserPrincipal>()!!
+                if (principal.role != Role.ADMIN) {
+                    call.respond(HttpStatusCode.Forbidden, mapOf("error" to "Forbidden"))
+                    return@get
+                }
+
+                val limit = call.request.queryParameters["limit"]?.toIntOrNull()?.coerceIn(1, 200) ?: 50
+                val offset = call.request.queryParameters["offset"]?.toLongOrNull()?.coerceAtLeast(0) ?: 0L
+                val action = call.request.queryParameters["action"]
+                val actorType = call.request.queryParameters["actorType"]
+
+                call.respond(audit.list(limit = limit, offset = offset, action = action, actorType = actorType))
+            }
+
             route("/profiles") {
                 get {
                     val principal = call.principal<UserPrincipal>()!!
@@ -56,7 +72,6 @@ fun Route.adminRoutes() {
                     call.respond(HttpStatusCode.Created, profiles.create(req))
                 }
 
-                // ✅ GET /{id} - Parse UUID + 404 if not found
                 get("/{id}") {
                     val principal = call.principal<UserPrincipal>()!!
                     if (principal.role != Role.ADMIN) {
@@ -74,7 +89,6 @@ fun Route.adminRoutes() {
                     call.respond(p)
                 }
 
-                // ✅ PUT /{id} - Parse UUID + 404 if not found
                 put("/{id}") {
                     val principal = call.principal<UserPrincipal>()!!
                     if (principal.role != Role.ADMIN) {
@@ -93,7 +107,6 @@ fun Route.adminRoutes() {
                     call.respond(p)
                 }
 
-                // ✅ DELETE /{id} - Parse UUID + 404 if not found
                 delete("/{id}") {
                     val principal = call.principal<UserPrincipal>()!!
                     if (principal.role != Role.ADMIN) {
@@ -130,7 +143,6 @@ fun Route.adminRoutes() {
                 }
             }
 
-            // ===== Devices =====
             route("/devices") {
                 get {
                     val principal = call.principal<UserPrincipal>()!!
@@ -141,7 +153,6 @@ fun Route.adminRoutes() {
                     call.respond(devices.list())
                 }
 
-                // ✅ GET /{id} - Parse UUID + 404 if not found
                 get("/{id}") {
                     val principal = call.principal<UserPrincipal>()!!
                     if (principal.role != Role.ADMIN) {
@@ -167,17 +178,18 @@ fun Route.adminRoutes() {
                     }
                     val id = runCatching {
                         UUID.fromString(call.parameters["id"]!!)
-                    }.getOrElse { _ ->
+                    }.getOrElse {
                         throw HttpException(HttpStatusCode.BadRequest, "Invalid UUID format: ${call.parameters["id"]}")
                     }
                     val body = call.receive<DeviceLinkRequest>()
-                    val d = devices.linkDeviceToUserCode(id, body.userCode) ?: run {
+
+                    val d = devices.linkDeviceToUserCode(id, body.userCode, principal.userId) ?: run {
                         throw HttpException(HttpStatusCode.NotFound, "Device not found")
                     }
+
                     call.respond(d)
                 }
 
-                // ✅ POST /{id}/lock - Parse UUID + 404 if not found
                 post("/{id}/lock") {
                     val principal = call.principal<UserPrincipal>()!!
                     if (principal.role != Role.ADMIN) {
@@ -186,16 +198,25 @@ fun Route.adminRoutes() {
                     }
                     val id = runCatching {
                         UUID.fromString(call.parameters["id"]!!)
-                    }.getOrElse { _ ->
+                    }.getOrElse {
                         throw HttpException(HttpStatusCode.BadRequest, "Invalid UUID format: ${call.parameters["id"]}")
                     }
                     if (!devices.lockDevice(id)) {
                         throw HttpException(HttpStatusCode.NotFound, "Device not found")
                     }
+
+                    audit.log(
+                        actorType = "ADMIN",
+                        actorUserId = principal.userId,
+                        action = "LOCK_DEVICE",
+                        targetType = "DEVICE",
+                        targetId = id.toString(),
+                        payloadJson = """{"ok":true}"""
+                    )
+
                     call.respond(mapOf("ok" to true))
                 }
 
-                // ✅ POST /{id}/reset-unlock-pass - Parse UUID + 404 if not found
                 post("/{id}/reset-unlock-pass") {
                     val principal = call.principal<UserPrincipal>()!!
                     if (principal.role != Role.ADMIN) {
@@ -204,19 +225,27 @@ fun Route.adminRoutes() {
                     }
                     val id = runCatching {
                         UUID.fromString(call.parameters["id"]!!)
-                    }.getOrElse { _ ->
+                    }.getOrElse {
                         throw HttpException(HttpStatusCode.BadRequest, "Invalid UUID format: ${call.parameters["id"]}")
                     }
                     val req = call.receive<AdminResetUnlockPassRequest>()
                     if (!devices.resetUnlockPass(id, req.newPassword)) {
                         throw HttpException(HttpStatusCode.NotFound, "Device not found")
                     }
+
+                    audit.log(
+                        actorType = "ADMIN",
+                        actorUserId = principal.userId,
+                        action = "RESET_UNLOCK_PASS",
+                        targetType = "DEVICE",
+                        targetId = id.toString(),
+                        payloadJson = """{"ok":true}"""
+                    )
+
                     call.respond(mapOf("ok" to true))
                 }
 
-                // ===== Commands =====
                 route("/{id}/commands") {
-                    // ✅ POST - Create command, 404 device not found, 400 invalid payload
                     post {
                         val principal = call.principal<UserPrincipal>()!!
                         if (principal.role != Role.ADMIN) {
@@ -225,7 +254,7 @@ fun Route.adminRoutes() {
                         }
                         val deviceId = runCatching {
                             UUID.fromString(call.parameters["id"]!!)
-                        }.getOrElse { _ ->
+                        }.getOrElse {
                             throw HttpException(HttpStatusCode.BadRequest, "Invalid UUID format: ${call.parameters["id"]}")
                         }
                         val req = call.receive<AdminCreateCommandRequest>()
@@ -239,10 +268,10 @@ fun Route.adminRoutes() {
                                 else -> throw e
                             }
                         }
+
                         call.respond(HttpStatusCode.Created, result)
                     }
 
-                    // ✅ GET - List commands, 404 device not found, 400 invalid status enum
                     get {
                         val principal = call.principal<UserPrincipal>()!!
                         if (principal.role != Role.ADMIN) {
@@ -251,18 +280,14 @@ fun Route.adminRoutes() {
                         }
                         val deviceId = runCatching {
                             UUID.fromString(call.parameters["id"]!!)
-                        }.getOrElse { _ ->
+                        }.getOrElse {
                             throw HttpException(HttpStatusCode.BadRequest, "Invalid UUID format: ${call.parameters["id"]}")
                         }
                         val status = call.request.queryParameters["status"]
 
-                        // ✅ Validate status enum if provided
                         if (status != null) {
-                            runCatching {
-                                com.example.mdmbackend.model.CommandStatus.valueOf(status.uppercase())
-                            }.getOrElse { _ ->
-                                throw HttpException(HttpStatusCode.BadRequest, "Invalid status enum: $status")
-                            }
+                            runCatching { com.example.mdmbackend.model.CommandStatus.valueOf(status.uppercase()) }
+                                .getOrElse { throw HttpException(HttpStatusCode.BadRequest, "Invalid status enum: $status") }
                         }
 
                         val limit = call.request.queryParameters["limit"]?.toIntOrNull() ?: 50
@@ -279,9 +304,36 @@ fun Route.adminRoutes() {
                         }
                         call.respond(result)
                     }
+
+                    post("/{commandId}/cancel") {
+                        val principal = call.principal<UserPrincipal>()!!
+                        if (principal.role != Role.ADMIN) {
+                            call.respond(HttpStatusCode.Forbidden, mapOf("error" to "Forbidden"))
+                            return@post
+                        }
+
+                        val deviceId = runCatching { UUID.fromString(call.parameters["id"]!!) }
+                            .getOrElse { throw HttpException(HttpStatusCode.BadRequest, "Invalid UUID format: ${call.parameters["id"]}") }
+
+                        val commandId = runCatching { UUID.fromString(call.parameters["commandId"]!!) }
+                            .getOrElse { throw HttpException(HttpStatusCode.BadRequest, "Invalid UUID format: ${call.parameters["commandId"]}") }
+
+                        val req = call.receive<AdminCancelCommandRequest>()
+                        val result = commandService.adminCancel(deviceId, commandId, principal.userId, req)
+
+                        audit.log(
+                            actorType = "ADMIN",
+                            actorUserId = principal.userId,
+                            action = "CANCEL_COMMAND",
+                            targetType = "COMMAND",
+                            targetId = commandId.toString(),
+                            payloadJson = """{"reason":"${req.reason}","errorCode":${req.errorCode?.let { "\"$it\"" } ?: "null"}}"""
+                        )
+
+                        call.respond(result)
+                    }
                 }
 
-                // ✅ GET /{id}/location/latest - Parse UUID + 404 if not found
                 get("/{id}/location/latest") {
                     val principal = call.principal<UserPrincipal>()!!
                     if (principal.role != Role.ADMIN) {
@@ -296,16 +348,17 @@ fun Route.adminRoutes() {
                     val loc = privateInfoRepo.getLatestByDeviceId(deviceId) ?: run {
                         throw HttpException(HttpStatusCode.NotFound, "No location data")
                     }
-                    call.respond(AdminLatestLocationResponse(
-                        deviceId = deviceId.toString(),
-                        latitude = loc.latitude,
-                        longitude = loc.longitude,
-                        accuracyMeters = loc.accuracyMeters,
-                        updatedAtEpochMillis = loc.updatedAt.toEpochMilli(),
-                    ))
+                    call.respond(
+                        AdminLatestLocationResponse(
+                            deviceId = deviceId.toString(),
+                            latitude = loc.latitude,
+                            longitude = loc.longitude,
+                            accuracyMeters = loc.accuracyMeters,
+                            updatedAtEpochMillis = loc.updatedAt.toEpochMilli(),
+                        )
+                    )
                 }
 
-                // ✅ GET /{id}/events - Parse UUID
                 get("/{id}/events") {
                     val principal = call.principal<UserPrincipal>()!!
                     if (principal.role != Role.ADMIN) {
@@ -330,7 +383,6 @@ fun Route.adminRoutes() {
                     })
                 }
 
-                // ✅ GET /{id}/usage/summary - Parse UUID
                 get("/{id}/usage/summary") {
                     val principal = call.principal<UserPrincipal>()!!
                     if (principal.role != Role.ADMIN) {
@@ -345,12 +397,14 @@ fun Route.adminRoutes() {
                     val from = call.request.queryParameters["fromEpochMillis"]?.toLongOrNull()?.let { Instant.ofEpochMilli(it) }
                     val to = call.request.queryParameters["toEpochMillis"]?.toLongOrNull()?.let { Instant.ofEpochMilli(it) }
                     val items = usageRepo.summaryByDeviceId(deviceId, from, to)
-                    call.respond(AdminUsageSummaryResponse(
-                        deviceId = deviceId.toString(),
-                        fromEpochMillis = from?.toEpochMilli(),
-                        toEpochMillis = to?.toEpochMilli(),
-                        items = items.map { AdminUsageSummaryItem(it.packageName, it.totalDurationMs, it.sessions) },
-                    ))
+                    call.respond(
+                        AdminUsageSummaryResponse(
+                            deviceId = deviceId.toString(),
+                            fromEpochMillis = from?.toEpochMilli(),
+                            toEpochMillis = to?.toEpochMilli(),
+                            items = items.map { AdminUsageSummaryItem(it.packageName, it.totalDurationMs, it.sessions) },
+                        )
+                    )
                 }
             }
         }

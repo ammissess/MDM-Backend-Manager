@@ -10,6 +10,19 @@ data class AdminCreateCommandRequest(
 )
 
 @Serializable
+data class AdminCancelCommandRequest(
+    val reason: String,
+    val errorCode: String? = null,
+)
+
+@Serializable
+data class AdminCancelCommandResponse(
+    val ok: Boolean,
+    val status: String,
+    val cancelledAtEpochMillis: Long,
+)
+
+@Serializable
 data class CommandView(
     val id: String,
     val deviceId: String,
@@ -18,11 +31,16 @@ data class CommandView(
     val status: String,
     val createdByUserId: String? = null,
     val createdAtEpochMillis: Long,
+    val expiresAtEpochMillis: Long? = null,
     val leasedAtEpochMillis: Long? = null,
     val leaseToken: String? = null,
     val leaseExpiresAtEpochMillis: Long? = null,
     val ackedAtEpochMillis: Long? = null,
+    val cancelledAtEpochMillis: Long? = null,
+    val cancelledByUserId: String? = null,
+    val cancelReason: String? = null,
     val error: String? = null,
+    val errorCode: String? = null,
     val output: String? = null,
 )
 
@@ -53,6 +71,7 @@ data class DeviceLeasedCommand(
     val leaseToken: String,
     val leaseExpiresAtEpochMillis: Long,
     val createdAtEpochMillis: Long,
+    val expiresAtEpochMillis: Long? = null,
 )
 
 @Serializable
@@ -62,6 +81,7 @@ data class DeviceAckCommandRequest(
     val leaseToken: String,
     val result: String, // SUCCESS|FAILED
     val error: String? = null,
+    val errorCode: String? = null,
     val output: String? = null,
 )
 
