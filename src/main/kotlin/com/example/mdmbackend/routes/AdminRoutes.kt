@@ -187,6 +187,19 @@ fun Route.adminRoutes() {
                         throw HttpException(HttpStatusCode.NotFound, "Device not found")
                     }
 
+                    // NEW: auto create refresh_config command after link success
+                    runCatching {
+                        commandService.adminCreate(
+                            deviceId = id,
+                            createdByUserId = principal.userId,
+                            req = AdminCreateCommandRequest(
+                                type = "refresh_config",
+                                payload = "{}",
+                                ttlSeconds = 600
+                            )
+                        )
+                    }
+
                     call.respond(d)
                 }
 
