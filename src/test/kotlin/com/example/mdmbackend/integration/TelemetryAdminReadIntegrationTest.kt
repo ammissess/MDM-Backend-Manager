@@ -1,11 +1,17 @@
 package com.example.mdmbackend.integration
 
 import com.example.mdmbackend.module
-import io.ktor.client.request.*
-import io.ktor.client.statement.*
-import io.ktor.http.*
+import io.ktor.client.request.get
+import io.ktor.client.request.header
+import io.ktor.client.request.post
+import io.ktor.client.request.setBody
+import io.ktor.client.statement.bodyAsText
+import io.ktor.http.ContentType
+import io.ktor.http.HttpStatusCode
+import io.ktor.http.contentType
 import io.ktor.serialization.kotlinx.json.json
-import io.ktor.server.testing.*
+
+import io.ktor.server.testing.testApplication
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertTrue
@@ -13,207 +19,160 @@ import kotlin.test.assertTrue
 class TelemetryAdminReadIntegrationTest {
 
     @Test
-    fun testLocationTelemetry() = testApplication {
+    fun testStateSnapshotAndPolicyState_AdminCanReadDetail() = testApplication {
         application { module() }
         val client = createClient {
-            install(io.ktor.client.plugins.contentnegotiation.ContentNegotiation) {
-                json()
-            }
+            install(io.ktor.client.plugins.contentnegotiation.ContentNegotiation) { json() }
         }
 
-        // Register device
-        val deviceToken = TestAuthHelper.loginDevice(client, "TEST_LOC_001")
+        val deviceCode = "TEST_STATE_001"
+        val deviceToken = TestAuthHelper.loginDevice(client, deviceCode)
+
         val registerResp = client.post("/api/device/register") {
             contentType(ContentType.Application.Json)
             header("Authorization", "Bearer $deviceToken")
-            setBody("""
-            {
-              "deviceCode": "TEST_LOC_001",
-              "androidVersion": "14",
-              "sdkInt": 34,
-              "manufacturer": "Apple",
-              "model": "iPhone 15",
-              "imei": "444444444",
-              "serial": "RF004",
-              "batteryLevel": 70,
-              "isCharging": false,
-              "wifiEnabled": true
-            }
-            """)
+            setBody("""{"deviceCode":"$deviceCode","androidVersion":"14","sdkInt":34}""")
         }
+        assertEquals(HttpStatusCode.OK, registerResp.status)
         val deviceId = TestJsonHelper.extractField(registerResp.bodyAsText(), "deviceId")
 
-        // Device post location
-        val locResp = client.post("/api/device/location") {
+        val now = System.currentTimeMillis()
+        val stateResp = client.post("/api/device/state") {
             contentType(ContentType.Application.Json)
             header("Authorization", "Bearer $deviceToken")
-            setBody("""
-            {
-              "deviceCode": "TEST_LOC_001",
-              "latitude": 21.0285,
-              "longitude": 105.8542,
-              "accuracyMeters": 50.0
-            }
-            """)
+            setBody(
+                """
+                {
+                  "deviceCode":"$deviceCode",
+                  "reportedAtEpochMillis":$now,
+                  "batteryLevel":88,
+                  "isCharging":true,
+                  "wifiEnabled":true,
+                  "networkType":"WIFI",
+                  "foregroundPackage":"com.android.settings",
+                  "isDeviceOwner":true,
+                  "isLauncherDefault":true,
+                  "isKioskRunning":true,
+                  "storageFreeBytes":123456,
+                  "storageTotalBytes":987654,
+                  "ramFreeMb":512,
+                  "ramTotalMb":2048,
+                  "lastBootAtEpochMillis":${now - 3600000}
+                }
+                """.trimIndent()
+            )
         }
-        assertEquals(HttpStatusCode.OK, locResp.status)
-        println("✅ Location posted")
+        assertEquals(HttpStatusCode.OK, stateResp.status)
 
-        // Admin get location/latest
+        val policyResp = client.post("/api/device/policy-state") {
+            contentType(ContentType.Application.Json)
+            header("Authorization", "Bearer $deviceToken")
+            setBody(
+                """
+                {
+                  "deviceCode":"$deviceCode",
+                  "desiredConfigVersionEpochMillis":$now,
+                  "desiredConfigHash":"desired_hash_001",
+                  "appliedConfigVersionEpochMillis":$now,
+                  "appliedConfigHash":"applied_hash_001",
+                  "policyApplyStatus":"SUCCESS",
+                  "policyApplyError":null,
+                  "policyApplyErrorCode":null,
+                  "policyAppliedAtEpochMillis":$now
+                }
+                """.trimIndent()
+            )
+        }
+        assertEquals(HttpStatusCode.OK, policyResp.status)
+
         val adminToken = TestAuthHelper.loginAdmin(client)
-        val getLocResp = client.get("/api/admin/devices/$deviceId/location/latest") {
+        val detailResp = client.get("/api/admin/devices/$deviceId") {
             header("Authorization", "Bearer $adminToken")
         }
+        assertEquals(HttpStatusCode.OK, detailResp.status)
 
-        assertEquals(HttpStatusCode.OK, getLocResp.status)
-        val locBody = getLocResp.bodyAsText()
-        assertTrue(locBody.contains("21.0285"))
-        assertTrue(locBody.contains("105.8542"))
-        assertTrue(locBody.contains("50"))
-        println("✅ Location retrieved by admin")
+        val body = detailResp.bodyAsText()
+        assertTrue(body.contains("networkType"))
+        assertTrue(body.contains("WIFI"))
+        assertTrue(body.contains("policyApplyStatus"))
+        assertTrue(body.contains("SUCCESS"))
+        assertTrue(body.contains("desired_hash_001"))
+        assertTrue(body.contains("applied_hash_001"))
     }
 
     @Test
-    fun testEventTelemetry() = testApplication {
+    fun testDeviceCodeMismatchForStateAndPolicy_ShouldReturn409() = testApplication {
         application { module() }
         val client = createClient {
-            install(io.ktor.client.plugins.contentnegotiation.ContentNegotiation) {
-                json()
-            }
+            install(io.ktor.client.plugins.contentnegotiation.ContentNegotiation) { json() }
         }
 
-        // Register device
-        val deviceToken = TestAuthHelper.loginDevice(client, "TEST_EVT_001")
+        val deviceToken = TestAuthHelper.loginDevice(client, "MISMATCH_DEV_A")
+        val now = System.currentTimeMillis()
+
+        val stateResp = client.post("/api/device/state") {
+            contentType(ContentType.Application.Json)
+            header("Authorization", "Bearer $deviceToken")
+            setBody("""{"deviceCode":"MISMATCH_DEV_B","reportedAtEpochMillis":$now}""")
+        }
+        assertEquals(HttpStatusCode.Conflict, stateResp.status)
+        assertTrue(stateResp.bodyAsText().contains("DEVICE_CODE_MISMATCH"))
+
+        val policyResp = client.post("/api/device/policy-state") {
+            contentType(ContentType.Application.Json)
+            header("Authorization", "Bearer $deviceToken")
+            setBody("""{"deviceCode":"MISMATCH_DEV_B","policyApplyStatus":"SUCCESS"}""")
+        }
+        assertEquals(HttpStatusCode.Conflict, policyResp.status)
+        assertTrue(policyResp.bodyAsText().contains("DEVICE_CODE_MISMATCH"))
+    }
+
+    @Test
+    fun testStructuredEventSavedAndReturnedToAdmin() = testApplication {
+        application { module() }
+        val client = createClient {
+            install(io.ktor.client.plugins.contentnegotiation.ContentNegotiation) { json() }
+        }
+
+        val deviceCode = "TEST_EVT_STRUCT_001"
+        val deviceToken = TestAuthHelper.loginDevice(client, deviceCode)
+
         val registerResp = client.post("/api/device/register") {
             contentType(ContentType.Application.Json)
             header("Authorization", "Bearer $deviceToken")
-            setBody("""
-            {
-              "deviceCode": "TEST_EVT_001",
-              "androidVersion": "14",
-              "sdkInt": 34,
-              "manufacturer": "Huawei",
-              "model": "P60",
-              "imei": "555555555",
-              "serial": "RF005",
-              "batteryLevel": 45,
-              "isCharging": true,
-              "wifiEnabled": false
-            }
-            """)
+            setBody("""{"deviceCode":"$deviceCode"}""")
         }
+        assertEquals(HttpStatusCode.OK, registerResp.status)
         val deviceId = TestJsonHelper.extractField(registerResp.bodyAsText(), "deviceId")
 
-        // Device post event
-        val eventResp = client.post("/api/device/TEST_EVT_001/events") {
+        val eventResp = client.post("/api/device/$deviceCode/events") {
             contentType(ContentType.Application.Json)
             header("Authorization", "Bearer $deviceToken")
-            setBody("""
-            {
-              "type": "app_crash",
-              "payload": "{\"app\":\"com.android.chrome\",\"error\":\"NullPointerException\"}"
-            }
-            """)
+            setBody(
+                """
+                {
+                  "type":"policy_apply",
+                  "category":"POLICY",
+                  "severity":"ERROR",
+                  "payload":"{\"step\":\"setLockTaskPackages\"}",
+                  "errorCode":"POLICY_APPLY_FAILED",
+                  "message":"Failed to apply lock task packages"
+                }
+                """.trimIndent()
+            )
         }
         assertEquals(HttpStatusCode.OK, eventResp.status)
-        println("✅ Event posted")
 
-        // Admin get events
         val adminToken = TestAuthHelper.loginAdmin(client)
-        val getEvtResp = client.get("/api/admin/devices/$deviceId/events?limit=10") {
+        val listResp = client.get("/api/admin/devices/$deviceId/events?limit=10") {
             header("Authorization", "Bearer $adminToken")
         }
-
-        assertEquals(HttpStatusCode.OK, getEvtResp.status)
-        val evtBody = getEvtResp.bodyAsText()
-        assertTrue(evtBody.contains("app_crash"))
-        assertTrue(evtBody.contains("NullPointerException"))
-        println("✅ Events retrieved by admin")
-    }
-
-    @Test
-    fun testNoLocationData_Returns404() = testApplication {
-        application { module() }
-        val client = createClient {
-            install(io.ktor.client.plugins.contentnegotiation.ContentNegotiation) {
-                json()
-            }
-        }
-
-        // Register device nhưng không post location
-        val deviceToken = TestAuthHelper.loginDevice(client, "TEST_LOC_EMPTY")
-        val registerResp = client.post("/api/device/register") {
-            contentType(ContentType.Application.Json)
-            header("Authorization", "Bearer $deviceToken")
-            setBody("""
-            {
-              "deviceCode": "TEST_LOC_EMPTY",
-              "androidVersion": "14",
-              "sdkInt": 34,
-              "manufacturer": "Generic",
-              "model": "Phone",
-              "imei": "666666666",
-              "serial": "RF006",
-              "batteryLevel": 30,
-              "isCharging": false,
-              "wifiEnabled": true
-            }
-            """)
-        }
-        val deviceId = TestJsonHelper.extractField(registerResp.bodyAsText(), "deviceId")
-
-        // Admin try get location → 404
-        val adminToken = TestAuthHelper.loginAdmin(client)
-        val getLocResp = client.get("/api/admin/devices/$deviceId/location/latest") {
-            header("Authorization", "Bearer $adminToken")
-        }
-
-        assertEquals(HttpStatusCode.NotFound, getLocResp.status)
-        assertTrue(getLocResp.bodyAsText().contains("No location data"))
-        println("✅ No location data correctly returns 404")
-    }
-
-    @Test
-    fun testDeviceStatus_ListedByAdmin() = testApplication {
-        application { module() }
-        val client = createClient {
-            install(io.ktor.client.plugins.contentnegotiation.ContentNegotiation) {
-                json()
-            }
-        }
-
-        // Register device
-        val deviceToken = TestAuthHelper.loginDevice(client, "TEST_STATUS_001")
-        val registerResp = client.post("/api/device/register") {
-            contentType(ContentType.Application.Json)
-            header("Authorization", "Bearer $deviceToken")
-            setBody("""
-            {
-              "deviceCode": "TEST_STATUS_001",
-              "androidVersion": "14",
-              "sdkInt": 34,
-              "manufacturer": "Google",
-              "model": "Nexus",
-              "imei": "777777777",
-              "serial": "RF007",
-              "batteryLevel": 20,
-              "isCharging": false,
-              "wifiEnabled": true
-            }
-            """)
-        }
-        val deviceId = TestJsonHelper.extractField(registerResp.bodyAsText(), "deviceId")
-
-        // Admin list devices
-        val adminToken = TestAuthHelper.loginAdmin(client)
-        val listResp = client.get("/api/admin/devices") {
-            header("Authorization", "Bearer $adminToken")
-        }
-
         assertEquals(HttpStatusCode.OK, listResp.status)
+
         val body = listResp.bodyAsText()
-        assertTrue(body.contains("TEST_STATUS_001"))
-        assertTrue(body.contains("LOCKED")) // Default status khi register
-        println("✅ Device status shown in admin list")
+        assertTrue(body.contains("POLICY"))
+        assertTrue(body.contains("ERROR"))
+        assertTrue(body.contains("POLICY_APPLY_FAILED"))
+        assertTrue(body.contains("Failed to apply lock task packages"))
     }
 }

@@ -1,7 +1,21 @@
 package com.example.mdmbackend.routes
 
 import com.example.mdmbackend.config.AppConfig
-import com.example.mdmbackend.dto.*
+import com.example.mdmbackend.dto.DeviceAckCommandRequest
+import com.example.mdmbackend.dto.DeviceAckCommandResponse
+import com.example.mdmbackend.dto.DeviceEventRequest
+import com.example.mdmbackend.dto.DevicePolicyStateReportRequest
+import com.example.mdmbackend.dto.DevicePolicyStateResponse
+import com.example.mdmbackend.dto.DevicePollCommandsRequest
+import com.example.mdmbackend.dto.DevicePollCommandsResponse
+import com.example.mdmbackend.dto.DeviceRegisterRequest
+import com.example.mdmbackend.dto.DeviceStateSnapshotRequest
+import com.example.mdmbackend.dto.DeviceUnlockRequest
+import com.example.mdmbackend.dto.DeviceUnlockResponse
+import com.example.mdmbackend.dto.LocationUpdateRequest
+import com.example.mdmbackend.dto.UsageBatchReportRequest
+import com.example.mdmbackend.dto.UsageBatchReportResponse
+import com.example.mdmbackend.dto.UsageReportRequest
 import com.example.mdmbackend.middleware.HttpException
 import com.example.mdmbackend.middleware.UserPrincipal
 import com.example.mdmbackend.model.Role
@@ -14,11 +28,15 @@ import com.example.mdmbackend.service.CommandDeliveryService
 import com.example.mdmbackend.service.DeviceCommandService
 import com.example.mdmbackend.service.DeviceService
 import com.example.mdmbackend.service.PollingDeliveryStrategy
-import io.ktor.http.*
-import io.ktor.server.auth.*
-import io.ktor.server.request.*
-import io.ktor.server.response.*
-import io.ktor.server.routing.*
+import io.ktor.http.HttpStatusCode
+import io.ktor.server.auth.authenticate
+import io.ktor.server.auth.principal
+import io.ktor.server.request.receive
+import io.ktor.server.response.respond
+import io.ktor.server.routing.Route
+import io.ktor.server.routing.get
+import io.ktor.server.routing.post
+import io.ktor.server.routing.route
 import java.util.UUID
 
 fun Route.deviceRoutes(cfg: AppConfig) {
@@ -82,24 +100,15 @@ fun Route.deviceRoutes(cfg: AppConfig) {
                     UUID.fromString(req.commandId)
                     UUID.fromString(req.leaseToken)
                 }.getOrElse {
-                    throw HttpException(
-                        HttpStatusCode.BadRequest,
-                        "Invalid UUID format: commandId or leaseToken"
-                    )
+                    throw HttpException(HttpStatusCode.BadRequest, "Invalid UUID format: commandId or leaseToken")
                 }
 
-                val resp = runCatching {
-                    commandService.deviceAck(
-                        req = req,
-                        sessionDeviceCode = principal.deviceCode,
-                    )
+                val resp: DeviceAckCommandResponse = runCatching {
+                    commandService.deviceAck(req = req, sessionDeviceCode = principal.deviceCode)
                 }.getOrElse { e ->
                     when (e) {
                         is HttpException -> throw e
-                        is IllegalArgumentException -> throw HttpException(
-                            HttpStatusCode.BadRequest,
-                            e.message ?: "Bad request"
-                        )
+                        is IllegalArgumentException -> throw HttpException(HttpStatusCode.BadRequest, e.message ?: "Bad request")
                         is IllegalStateException -> throw HttpException(
                             HttpStatusCode.Conflict,
                             e.message ?: "Lease mismatch or command not found",
@@ -112,6 +121,7 @@ fun Route.deviceRoutes(cfg: AppConfig) {
                         )
                     }
                 }
+
                 call.respond(resp)
             }
 
@@ -153,22 +163,11 @@ fun Route.deviceRoutes(cfg: AppConfig) {
                 )
 
                 if (!result.ok) {
-                    call.respond(
-                        HttpStatusCode.Locked,
-                        mapOf(
-                            "error" to result.message,
-                            "status" to result.status
-                        )
-                    )
+                    call.respond(HttpStatusCode.Locked, mapOf("error" to result.message, "status" to result.status))
                     return@post
                 }
 
-                call.respond(
-                    DeviceUnlockResponse(
-                        status = result.status,
-                        message = result.message
-                    )
-                )
+                call.respond(DeviceUnlockResponse(status = result.status, message = result.message))
             }
 
             post("/location") {
@@ -181,14 +180,9 @@ fun Route.deviceRoutes(cfg: AppConfig) {
                 val req = call.receive<LocationUpdateRequest>()
                 requireDeviceCodeMatchIfDevice(principal, req.deviceCode)
 
-                val ok = deviceService.updateLocation(
-                    req = req,
-                    actorType = principal.role.name,
-                    actorUserId = principal.userId
-                )
-                if (!ok) {
-                    throw HttpException(HttpStatusCode.NotFound, "Device not found")
-                }
+                val ok = deviceService.updateLocation(req = req, actorType = principal.role.name, actorUserId = principal.userId)
+                if (!ok) throw HttpException(HttpStatusCode.NotFound, "Device not found")
+
                 call.respond(mapOf("ok" to true))
             }
 
@@ -202,14 +196,9 @@ fun Route.deviceRoutes(cfg: AppConfig) {
                 val req = call.receive<UsageReportRequest>()
                 requireDeviceCodeMatchIfDevice(principal, req.deviceCode)
 
-                val ok = deviceService.insertUsage(
-                    req = req,
-                    actorType = principal.role.name,
-                    actorUserId = principal.userId
-                )
-                if (!ok) {
-                    throw HttpException(HttpStatusCode.NotFound, "Device not found")
-                }
+                val ok = deviceService.insertUsage(req = req, actorType = principal.role.name, actorUserId = principal.userId)
+                if (!ok) throw HttpException(HttpStatusCode.NotFound, "Device not found")
+
                 call.respond(mapOf("ok" to true))
             }
 
@@ -223,14 +212,56 @@ fun Route.deviceRoutes(cfg: AppConfig) {
                 val req = call.receive<UsageBatchReportRequest>()
                 requireDeviceCodeMatchIfDevice(principal, req.deviceCode)
 
-                val resp = deviceService.insertUsageBatch(
+                val resp: UsageBatchReportResponse = deviceService.insertUsageBatch(
                     req = req,
                     actorType = principal.role.name,
                     actorUserId = principal.userId
                 )
-                if (!resp.ok) {
-                    throw HttpException(HttpStatusCode.NotFound, "Device not found")
+                if (!resp.ok) throw HttpException(HttpStatusCode.NotFound, "Device not found")
+
+                call.respond(resp)
+            }
+
+            post("/state") {
+                val principal = call.principal<UserPrincipal>()!!
+                if (principal.role != Role.DEVICE && principal.role != Role.ADMIN) {
+                    call.respond(HttpStatusCode.Forbidden, mapOf("error" to "Forbidden"))
+                    return@post
                 }
+
+                val req = call.receive<DeviceStateSnapshotRequest>()
+                requireDeviceCodeMatchIfDevice(principal, req.deviceCode)
+
+                val resp = deviceService.upsertStateSnapshot(
+                    req = req,
+                    actorType = principal.role.name,
+                    actorUserId = principal.userId
+                ) ?: throw HttpException(HttpStatusCode.NotFound, "Device not found")
+
+                call.respond(resp)
+            }
+
+            post("/policy-state") {
+                val principal = call.principal<UserPrincipal>()!!
+                if (principal.role != Role.DEVICE && principal.role != Role.ADMIN) {
+                    call.respond(HttpStatusCode.Forbidden, mapOf("error" to "Forbidden"))
+                    return@post
+                }
+
+                val req = call.receive<DevicePolicyStateReportRequest>()
+                requireDeviceCodeMatchIfDevice(principal, req.deviceCode)
+
+                val normalizedStatus = req.policyApplyStatus.uppercase()
+                if (normalizedStatus !in setOf("PENDING", "SUCCESS", "FAILED", "PARTIAL")) {
+                    throw HttpException(HttpStatusCode.BadRequest, "Invalid policyApplyStatus: ${req.policyApplyStatus}")
+                }
+
+                val resp: DevicePolicyStateResponse = deviceService.upsertPolicyState(
+                    req = req.copy(policyApplyStatus = normalizedStatus),
+                    actorType = principal.role.name,
+                    actorUserId = principal.userId
+                ) ?: throw HttpException(HttpStatusCode.NotFound, "Device not found")
+
                 call.respond(resp)
             }
 
@@ -251,9 +282,8 @@ fun Route.deviceRoutes(cfg: AppConfig) {
                     actorType = principal.role.name,
                     actorUserId = principal.userId
                 )
-                if (!ok) {
-                    throw HttpException(HttpStatusCode.NotFound, "Device not found")
-                }
+                if (!ok) throw HttpException(HttpStatusCode.NotFound, "Device not found")
+
                 call.respond(mapOf("ok" to true))
             }
 
@@ -268,17 +298,12 @@ fun Route.deviceRoutes(cfg: AppConfig) {
                 if (deviceCode.isNullOrBlank()) {
                     throw HttpException(HttpStatusCode.BadRequest, "Missing query param: deviceCode")
                 }
+
                 requireDeviceCodeMatchIfDevice(principal, deviceCode)
 
-                val status = deviceService.getDeviceStatus(deviceCode)
-                if (status == null) {
-                    throw HttpException(HttpStatusCode.NotFound, "Device not found")
-                }
+                val status = deviceService.getDeviceStatus(deviceCode) ?: throw HttpException(HttpStatusCode.NotFound, "Device not found")
                 if (status != "ACTIVE") {
-                    call.respond(
-                        HttpStatusCode.Locked,
-                        mapOf("error" to "Device is locked", "status" to status)
-                    )
+                    call.respond(HttpStatusCode.Locked, mapOf("error" to "Device is locked", "status" to status))
                     return@get
                 }
 
@@ -306,24 +331,16 @@ fun Route.deviceRoutes(cfg: AppConfig) {
                 if (deviceCode.isNullOrBlank()) {
                     throw HttpException(HttpStatusCode.BadRequest, "Missing query param: deviceCode")
                 }
+
                 requireDeviceCodeMatchIfDevice(principal, deviceCode)
 
-                val status = deviceService.getDeviceStatus(deviceCode)
-                if (status == null) {
-                    throw HttpException(HttpStatusCode.NotFound, "Device not found")
-                }
+                val status = deviceService.getDeviceStatus(deviceCode) ?: throw HttpException(HttpStatusCode.NotFound, "Device not found")
                 if (status != "ACTIVE") {
-                    call.respond(
-                        HttpStatusCode.Locked,
-                        mapOf("error" to "Device is locked", "status" to status)
-                    )
+                    call.respond(HttpStatusCode.Locked, mapOf("error" to "Device is locked", "status" to status))
                     return@get
                 }
 
-                val config = deviceService.getConfigByUserCode(userCode)
-                if (config == null) {
-                    throw HttpException(HttpStatusCode.NotFound, "Profile not found")
-                }
+                val config = deviceService.getConfigByUserCode(userCode) ?: throw HttpException(HttpStatusCode.NotFound, "Profile not found")
                 call.respond(config)
             }
         }

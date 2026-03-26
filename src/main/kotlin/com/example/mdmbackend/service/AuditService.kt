@@ -15,9 +15,7 @@ class AuditService(
     }
 
     fun registerEventSubscribers(bus: EventBus) {
-        if (!subscribersRegistered.compareAndSet(false, true)) {
-            return
-        }
+        if (!subscribersRegistered.compareAndSet(false, true)) return
 
         bus.subscribe { event ->
             when (event) {

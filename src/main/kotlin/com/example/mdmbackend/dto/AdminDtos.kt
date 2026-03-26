@@ -2,7 +2,6 @@ package com.example.mdmbackend.dto
 
 import kotlinx.serialization.Serializable
 
-// Nhóm B — admin telemetry read
 @Serializable
 data class AdminLatestLocationResponse(
     val deviceId: String,
@@ -17,7 +16,11 @@ data class AdminDeviceEventView(
     val id: String,
     val deviceId: String,
     val type: String,
+    val category: String,
+    val severity: String,
     val payload: String,
+    val errorCode: String? = null,
+    val message: String? = null,
     val createdAtEpochMillis: Long,
 )
 
@@ -36,7 +39,6 @@ data class AdminUsageSummaryResponse(
     val items: List<AdminUsageSummaryItem>,
 )
 
-// Nhóm C — admin device actions
 @Serializable
 data class AdminResetUnlockPassRequest(
     val newPassword: String,

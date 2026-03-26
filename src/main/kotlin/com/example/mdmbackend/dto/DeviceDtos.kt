@@ -2,23 +2,15 @@ package com.example.mdmbackend.dto
 
 import kotlinx.serialization.Serializable
 
-/**
- * Register/heartbeat từ DO -> Backend.
- * (Thiết kế mới: lấy tạm pin/wifi + status lock/unlock để test)
- */
 @Serializable
 data class DeviceRegisterRequest(
     val deviceCode: String,
-
-    // thiết bị
     val androidVersion: String = "",
     val sdkInt: Int = 0,
     val manufacturer: String = "",
     val model: String = "",
     val imei: String = "",
     val serial: String = "",
-
-    // trạng thái tạm để test
     val batteryLevel: Int = -1,
     val isCharging: Boolean = false,
     val wifiEnabled: Boolean = false,
@@ -28,82 +20,146 @@ data class DeviceRegisterRequest(
 data class DeviceRegisterResponse(
     val deviceId: String,
     val deviceCode: String,
-    val status: String,           // ACTIVE / LOCKED
-    val message: String? = null
+    val status: String,
+    val message: String? = null,
 )
 
-/**
- * Trả về thông tin thiết bị (admin list hoặc debug)
- */
 @Serializable
 data class DeviceResponse(
     val id: String,
     val deviceCode: String,
     val userCode: String? = null,
-
-
-    // thông tin thiết bị
     val androidVersion: String,
     val sdkInt: Int,
     val manufacturer: String,
     val model: String,
     val imei: String,
     val serial: String,
-
-    // trạng thái tạm để test
     val batteryLevel: Int,
     val isCharging: Boolean,
     val wifiEnabled: Boolean,
-
-    // trạng thái khóa
-    val status: String, // ACTIVE/LOCKED
-
+    val status: String,
     val lastSeenAtEpochMillis: Long,
 )
 
-/**
- * Thiết bị nhập pass để mở khóa
- */
+@Serializable
+data class DeviceDetailResponse(
+    val id: String,
+    val deviceCode: String,
+    val userCode: String? = null,
+    val androidVersion: String,
+    val sdkInt: Int,
+    val manufacturer: String,
+    val model: String,
+    val imei: String,
+    val serial: String,
+    val batteryLevel: Int,
+    val isCharging: Boolean,
+    val wifiEnabled: Boolean,
+    val networkType: String? = null,
+    val foregroundPackage: String? = null,
+    val isDeviceOwner: Boolean,
+    val isLauncherDefault: Boolean,
+    val isKioskRunning: Boolean,
+    val storageFreeBytes: Long,
+    val storageTotalBytes: Long,
+    val ramFreeMb: Int,
+    val ramTotalMb: Int,
+    val lastBootAtEpochMillis: Long? = null,
+    val lastTelemetryAtEpochMillis: Long? = null,
+    val desiredConfigVersionEpochMillis: Long? = null,
+    val desiredConfigHash: String? = null,
+    val appliedConfigVersionEpochMillis: Long? = null,
+    val appliedConfigHash: String? = null,
+    val policyApplyStatus: String,
+    val policyApplyError: String? = null,
+    val policyApplyErrorCode: String? = null,
+    val lastPolicyAppliedAtEpochMillis: Long? = null,
+    val status: String,
+    val lastSeenAtEpochMillis: Long,
+)
+
 @Serializable
 data class DeviceUnlockRequest(
     val deviceCode: String,
-    val password: String
+    val password: String,
 )
 
 @Serializable
 data class DeviceUnlockResponse(
-    val status: String,   // ACTIVE / LOCKED
-    val message: String
+    val status: String,
+    val message: String,
 )
 
-/**
- * Private info: update GPS 1 phút/lần
- */
 @Serializable
 data class LocationUpdateRequest(
     val deviceCode: String,
     val latitude: Double,
     val longitude: Double,
-    val accuracyMeters: Double = 0.0
+    val accuracyMeters: Double = 0.0,
 )
 
-/**
- * Usage app cá nhân (bảng riêng)
- */
 @Serializable
 data class UsageReportRequest(
     val deviceCode: String,
     val packageName: String,
     val startedAtEpochMillis: Long,
     val endedAtEpochMillis: Long,
-    val durationMs: Long
+    val durationMs: Long,
 )
 
-/**
- * Event/log từ device (tùy dùng)
- */
 @Serializable
 data class DeviceEventRequest(
     val type: String,
+    val category: String = "GENERAL",
+    val severity: String = "INFO",
     val payload: String = "{}",
+    val errorCode: String? = null,
+    val message: String? = null,
+)
+
+@Serializable
+data class DeviceStateSnapshotRequest(
+    val deviceCode: String,
+    val reportedAtEpochMillis: Long,
+    val batteryLevel: Int? = null,
+    val isCharging: Boolean? = null,
+    val wifiEnabled: Boolean? = null,
+    val networkType: String? = null,
+    val foregroundPackage: String? = null,
+    val isDeviceOwner: Boolean? = null,
+    val isLauncherDefault: Boolean? = null,
+    val isKioskRunning: Boolean? = null,
+    val storageFreeBytes: Long? = null,
+    val storageTotalBytes: Long? = null,
+    val ramFreeMb: Int? = null,
+    val ramTotalMb: Int? = null,
+    val lastBootAtEpochMillis: Long? = null,
+    val errorCode: String? = null,
+    val errorMessage: String? = null,
+)
+
+@Serializable
+data class DeviceStateSnapshotResponse(
+    val ok: Boolean,
+    val updatedAtEpochMillis: Long,
+)
+
+@Serializable
+data class DevicePolicyStateReportRequest(
+    val deviceCode: String,
+    val desiredConfigVersionEpochMillis: Long? = null,
+    val desiredConfigHash: String? = null,
+    val appliedConfigVersionEpochMillis: Long? = null,
+    val appliedConfigHash: String? = null,
+    val policyApplyStatus: String,
+    val policyApplyError: String? = null,
+    val policyApplyErrorCode: String? = null,
+    val policyAppliedAtEpochMillis: Long? = null,
+)
+
+@Serializable
+data class DevicePolicyStateResponse(
+    val ok: Boolean,
+    val status: String,
 )

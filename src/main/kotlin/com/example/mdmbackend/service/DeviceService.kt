@@ -1,12 +1,25 @@
 package com.example.mdmbackend.service
 
 import com.example.mdmbackend.config.AppConfig
-import com.example.mdmbackend.dto.*
+import com.example.mdmbackend.dto.DeviceEventRequest
+import com.example.mdmbackend.dto.DevicePolicyStateReportRequest
+import com.example.mdmbackend.dto.DevicePolicyStateResponse
+import com.example.mdmbackend.dto.DeviceRegisterRequest
+import com.example.mdmbackend.dto.DeviceRegisterResponse
+import com.example.mdmbackend.dto.DeviceStateSnapshotRequest
+import com.example.mdmbackend.dto.DeviceStateSnapshotResponse
+import com.example.mdmbackend.dto.DeviceConfigResponse
+import com.example.mdmbackend.dto.LocationUpdateRequest
+import com.example.mdmbackend.dto.UsageBatchReportRequest
+import com.example.mdmbackend.dto.UsageBatchReportResponse
+import com.example.mdmbackend.dto.UsageReportRequest
 import com.example.mdmbackend.model.DeviceStatus
 import com.example.mdmbackend.repository.DeviceAppUsageRepository
 import com.example.mdmbackend.repository.DevicePrivateInfoRepository
 import com.example.mdmbackend.repository.DeviceRepository
+import com.example.mdmbackend.repository.PolicyStateUpsert
 import com.example.mdmbackend.repository.ProfileRepository
+import com.example.mdmbackend.repository.StateSnapshotUpsert
 import com.example.mdmbackend.util.PasswordHasher
 import java.time.Instant
 import java.util.UUID
@@ -14,7 +27,7 @@ import java.util.UUID
 data class UnlockResult(
     val ok: Boolean,
     val status: String,
-    val message: String
+    val message: String,
 )
 
 class DeviceService(
@@ -31,9 +44,13 @@ class DeviceService(
         }
     }
 
-    fun register(req: DeviceRegisterRequest, actorType: String = "DEVICE", actorUserId: UUID? = null, actorDeviceCode: String? = null): DeviceRegisterResponse {
+    fun register(
+        req: DeviceRegisterRequest,
+        actorType: String = "DEVICE",
+        actorUserId: UUID? = null,
+        actorDeviceCode: String? = null,
+    ): DeviceRegisterResponse {
         val defaultPassHash = PasswordHasher.hash(cfg.seed.defaultDeviceUnlockPass)
-
         val record = devices.upsertRegister(
             deviceCode = req.deviceCode,
             androidVersion = req.androidVersion,
@@ -63,13 +80,26 @@ class DeviceService(
             deviceId = record.id.toString(),
             deviceCode = record.deviceCode,
             status = record.status,
-            message = null
+            message = null,
         )
     }
 
-    fun addEvent(deviceCode: String, req: DeviceEventRequest, actorType: String = "DEVICE", actorUserId: UUID? = null): Boolean {
+    fun addEvent(
+        deviceCode: String,
+        req: DeviceEventRequest,
+        actorType: String = "DEVICE",
+        actorUserId: UUID? = null,
+    ): Boolean {
         val device = devices.findByDeviceCode(deviceCode) ?: return false
-        devices.addEvent(device.id, req.type, req.payload)
+        devices.addStructuredEvent(
+            deviceId = device.id,
+            type = req.type,
+            category = req.category,
+            severity = req.severity,
+            payload = req.payload,
+            errorCode = req.errorCode,
+            message = req.message,
+        )
 
         eventBus.publish(
             TelemetryReceivedEvent(
@@ -82,10 +112,98 @@ class DeviceService(
         return true
     }
 
-    fun getConfigByUserCode(userCode: String) =
-        profiles.findByUserCode(userCode)?.let { p ->
-            profiles.toDeviceConfigResponse(p)
+    fun upsertStateSnapshot(
+        req: DeviceStateSnapshotRequest,
+        actorType: String = "DEVICE",
+        actorUserId: UUID? = null,
+    ): DeviceStateSnapshotResponse? {
+        val snapshot = StateSnapshotUpsert(
+            reportedAt = Instant.ofEpochMilli(req.reportedAtEpochMillis),
+            batteryLevel = req.batteryLevel,
+            isCharging = req.isCharging,
+            wifiEnabled = req.wifiEnabled,
+            networkType = req.networkType,
+            foregroundPackage = req.foregroundPackage,
+            isDeviceOwner = req.isDeviceOwner,
+            isLauncherDefault = req.isLauncherDefault,
+            isKioskRunning = req.isKioskRunning,
+            storageFreeBytes = req.storageFreeBytes,
+            storageTotalBytes = req.storageTotalBytes,
+            ramFreeMb = req.ramFreeMb,
+            ramTotalMb = req.ramTotalMb,
+            lastBootAt = req.lastBootAtEpochMillis?.let { Instant.ofEpochMilli(it) },
+        )
+
+        val updated = devices.upsertStateSnapshot(req.deviceCode, snapshot) ?: return null
+
+        if (!req.errorCode.isNullOrBlank() || !req.errorMessage.isNullOrBlank()) {
+            devices.addStructuredEvent(
+                deviceId = updated.id,
+                type = "telemetry_state_report_error",
+                category = "TELEMETRY",
+                severity = "WARN",
+                payload = """{"reportedAtEpochMillis":${req.reportedAtEpochMillis}}""",
+                errorCode = req.errorCode,
+                message = req.errorMessage,
+            )
         }
+
+        eventBus.publish(
+            TelemetryReceivedEvent(
+                telemetryType = "state",
+                deviceCode = req.deviceCode,
+                actorType = actorType,
+                actorUserId = actorUserId,
+            )
+        )
+
+        return DeviceStateSnapshotResponse(ok = true, updatedAtEpochMillis = Instant.now().toEpochMilli())
+    }
+
+    fun upsertPolicyState(
+        req: DevicePolicyStateReportRequest,
+        actorType: String = "DEVICE",
+        actorUserId: UUID? = null,
+    ): DevicePolicyStateResponse? {
+        val policy = PolicyStateUpsert(
+            desiredConfigVersionEpochMillis = req.desiredConfigVersionEpochMillis,
+            desiredConfigHash = req.desiredConfigHash,
+            appliedConfigVersionEpochMillis = req.appliedConfigVersionEpochMillis,
+            appliedConfigHash = req.appliedConfigHash,
+            policyApplyStatus = req.policyApplyStatus,
+            policyApplyError = req.policyApplyError,
+            policyApplyErrorCode = req.policyApplyErrorCode,
+            policyAppliedAt = req.policyAppliedAtEpochMillis?.let { Instant.ofEpochMilli(it) },
+        )
+
+        val updated = devices.upsertPolicyState(req.deviceCode, policy) ?: return null
+
+        if (req.policyApplyStatus.equals("FAILED", ignoreCase = true) || !req.policyApplyError.isNullOrBlank()) {
+            devices.addStructuredEvent(
+                deviceId = updated.id,
+                type = "policy_apply_result",
+                category = "POLICY",
+                severity = if (req.policyApplyStatus.equals("FAILED", true)) "ERROR" else "WARN",
+                payload = """{"status":"${req.policyApplyStatus}","appliedConfigHash":${req.appliedConfigHash?.let { "\"$it\"" } ?: "null"}}""",
+                errorCode = req.policyApplyErrorCode,
+                message = req.policyApplyError,
+            )
+        }
+
+        eventBus.publish(
+            TelemetryReceivedEvent(
+                telemetryType = "policy_state",
+                deviceCode = req.deviceCode,
+                actorType = actorType,
+                actorUserId = actorUserId,
+            )
+        )
+
+        return DevicePolicyStateResponse(ok = true, status = req.policyApplyStatus)
+    }
+
+    fun getConfigByUserCode(userCode: String): DeviceConfigResponse? =
+        profiles.findByUserCode(userCode)?.let { profiles.toDeviceConfigResponse(it) }
 
     fun getCurrentConfigByDeviceCode(deviceCode: String): DeviceConfigResponse? {
         val device = devices.findByDeviceCode(deviceCode) ?: return null
@@ -96,12 +214,15 @@ class DeviceService(
 
     fun getDeviceStatus(deviceCode: String): String? = devices.findStatus(deviceCode)
 
-    fun unlock(deviceCode: String, password: String, actorType: String = "DEVICE", actorUserId: UUID? = null, actorDeviceCode: String? = null): UnlockResult {
+    fun unlock(
+        deviceCode: String,
+        password: String,
+        actorType: String = "DEVICE",
+        actorUserId: UUID? = null,
+        actorDeviceCode: String? = null,
+    ): UnlockResult {
         val status = devices.findStatus(deviceCode) ?: return UnlockResult(false, "NOT_FOUND", "Device not found")
-
-        if (status == DeviceStatus.ACTIVE.name) {
-            return UnlockResult(true, DeviceStatus.ACTIVE.name, "Already unlocked")
-        }
+        if (status == DeviceStatus.ACTIVE.name) return UnlockResult(true, DeviceStatus.ACTIVE.name, "Already unlocked")
 
         val ok = devices.unlock(deviceCode, password)
         val result = if (ok) {
@@ -121,26 +242,14 @@ class DeviceService(
                 )
             )
         }
-
         return result
     }
 
     fun updateLocation(req: LocationUpdateRequest, actorType: String = "DEVICE", actorUserId: UUID? = null): Boolean {
         val device = devices.findByDeviceCode(req.deviceCode) ?: return false
-        privateInfo.upsertLocation(
-            deviceId = device.id,
-            lat = req.latitude,
-            lon = req.longitude,
-            acc = req.accuracyMeters
-        )
-
+        privateInfo.upsertLocation(device.id, req.latitude, req.longitude, req.accuracyMeters)
         eventBus.publish(
-            TelemetryReceivedEvent(
-                telemetryType = "location",
-                deviceCode = req.deviceCode,
-                actorType = actorType,
-                actorUserId = actorUserId,
-            )
+            TelemetryReceivedEvent("location", req.deviceCode, actorType, actorUserId)
         )
         return true
     }
@@ -152,43 +261,28 @@ class DeviceService(
             packageName = req.packageName,
             startedAt = Instant.ofEpochMilli(req.startedAtEpochMillis),
             endedAt = Instant.ofEpochMilli(req.endedAtEpochMillis),
-            durationMs = req.durationMs
+            durationMs = req.durationMs,
         )
-
         eventBus.publish(
-            TelemetryReceivedEvent(
-                telemetryType = "usage",
-                deviceCode = req.deviceCode,
-                actorType = actorType,
-                actorUserId = actorUserId,
-            )
+            TelemetryReceivedEvent("usage", req.deviceCode, actorType, actorUserId)
         )
         return true
     }
 
     fun insertUsageBatch(req: UsageBatchReportRequest, actorType: String = "DEVICE", actorUserId: UUID? = null): UsageBatchReportResponse {
         val device = devices.findByDeviceCode(req.deviceCode) ?: return UsageBatchReportResponse(false, 0)
-
         val rows = req.items.map {
             DeviceAppUsageRepository.UsageRow(
                 packageName = it.packageName,
                 startedAt = Instant.ofEpochMilli(it.startedAtEpochMillis),
                 endedAt = Instant.ofEpochMilli(it.endedAtEpochMillis),
-                durationMs = it.durationMs
+                durationMs = it.durationMs,
             )
         }
-
         val inserted = usage.insertUsageBatch(device.id, rows)
-
         eventBus.publish(
-            TelemetryReceivedEvent(
-                telemetryType = "usage_batch",
-                deviceCode = req.deviceCode,
-                actorType = actorType,
-                actorUserId = actorUserId,
-            )
+            TelemetryReceivedEvent("usage_batch", req.deviceCode, actorType, actorUserId)
         )
-
         return UsageBatchReportResponse(ok = true, inserted = inserted)
     }
 }

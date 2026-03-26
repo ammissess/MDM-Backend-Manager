@@ -1,5 +1,6 @@
 package com.example.mdmbackend.service
 
+import com.example.mdmbackend.dto.DeviceDetailResponse
 import com.example.mdmbackend.dto.DeviceResponse
 import com.example.mdmbackend.repository.DeviceRepository
 import com.example.mdmbackend.repository.ProfileRepository
@@ -11,11 +12,11 @@ class AdminDeviceService(
     private val profiles: ProfileRepository,
     private val eventBus: EventBus = EventBusHolder.bus,
 ) {
-    fun list(): List<DeviceResponse> =
-        devices.list().map { d -> d.toDeviceResponse() }
+    fun list(): List<DeviceResponse> = devices.list().map { it.toDeviceResponse() }
 
-    fun getById(id: UUID): DeviceResponse? =
-        devices.findById(id)?.toDeviceResponse()
+    fun getById(id: UUID): DeviceResponse? = devices.findById(id)?.toDeviceResponse()
+
+    fun getDetailById(id: UUID): DeviceDetailResponse? = devices.findDetailById(id)?.toDeviceDetailResponse()
 
     fun linkDeviceToUserCode(deviceId: UUID, userCode: String?, actorUserId: UUID? = null): DeviceResponse? {
         val profileId = userCode?.let { profiles.findByUserCode(it)?.id }
@@ -26,7 +27,7 @@ class AdminDeviceService(
                 ProfileLinkedEvent(
                     deviceId = deviceId,
                     userCode = userCode,
-                    actorUserId = actorUserId
+                    actorUserId = actorUserId,
                 )
             )
         }
@@ -56,6 +57,43 @@ class AdminDeviceService(
             isCharging = isCharging,
             wifiEnabled = wifiEnabled,
             status = status,
-            lastSeenAtEpochMillis = lastSeenAt.toEpochMilli()
+            lastSeenAtEpochMillis = lastSeenAt.toEpochMilli(),
+        )
+
+    private fun com.example.mdmbackend.repository.DeviceRecord.toDeviceDetailResponse(): DeviceDetailResponse =
+        DeviceDetailResponse(
+            id = id.toString(),
+            deviceCode = deviceCode,
+            userCode = userCode,
+            androidVersion = androidVersion,
+            sdkInt = sdkInt,
+            manufacturer = manufacturer,
+            model = model,
+            imei = imei,
+            serial = serial,
+            batteryLevel = batteryLevel,
+            isCharging = isCharging,
+            wifiEnabled = wifiEnabled,
+            networkType = networkType,
+            foregroundPackage = foregroundPackage,
+            isDeviceOwner = isDeviceOwner,
+            isLauncherDefault = isLauncherDefault,
+            isKioskRunning = isKioskRunning,
+            storageFreeBytes = storageFreeBytes,
+            storageTotalBytes = storageTotalBytes,
+            ramFreeMb = ramFreeMb,
+            ramTotalMb = ramTotalMb,
+            lastBootAtEpochMillis = lastBootAt?.toEpochMilli(),
+            lastTelemetryAtEpochMillis = lastTelemetryAt?.toEpochMilli(),
+            desiredConfigVersionEpochMillis = desiredConfigVersionEpochMillis,
+            desiredConfigHash = desiredConfigHash,
+            appliedConfigVersionEpochMillis = appliedConfigVersionEpochMillis,
+            appliedConfigHash = appliedConfigHash,
+            policyApplyStatus = policyApplyStatus,
+            policyApplyError = policyApplyError,
+            policyApplyErrorCode = policyApplyErrorCode,
+            lastPolicyAppliedAtEpochMillis = lastPolicyAppliedAt?.toEpochMilli(),
+            status = status,
+            lastSeenAtEpochMillis = lastSeenAt.toEpochMilli(),
         )
 }
