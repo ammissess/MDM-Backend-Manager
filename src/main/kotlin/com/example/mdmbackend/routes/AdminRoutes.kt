@@ -34,6 +34,26 @@ fun Route.adminRoutes() {
     val commandService = DeviceCommandService(deviceRepo, commandRepo)
     val audit = AuditService()
 
+    fun enqueueRefreshConfigForProfileDevices(profileId: UUID, actorUserId: UUID) {
+        val linkedDeviceIds = deviceRepo.list()
+            .filter { it.profileId == profileId }
+            .map { it.id }
+
+        linkedDeviceIds.forEach { deviceId ->
+            runCatching {
+                commandService.adminCreate(
+                    deviceId = deviceId,
+                    createdByUserId = actorUserId,
+                    req = AdminCreateCommandRequest(
+                        type = "refresh_config",
+                        payload = "{}",
+                        ttlSeconds = 600
+                    )
+                )
+            }
+        }
+    }
+
     authenticate("session") {
         route("/admin") {
 
@@ -104,6 +124,9 @@ fun Route.adminRoutes() {
                     val p = profiles.update(id, req) ?: run {
                         throw HttpException(HttpStatusCode.NotFound, "Profile not found")
                     }
+
+                    enqueueRefreshConfigForProfileDevices(id, principal.userId)
+
                     call.respond(p)
                 }
 
@@ -139,6 +162,9 @@ fun Route.adminRoutes() {
                     val p = profiles.setAllowedApps(id, apps) ?: run {
                         throw HttpException(HttpStatusCode.NotFound, "Profile not found")
                     }
+
+                    enqueueRefreshConfigForProfileDevices(id, principal.userId)
+
                     call.respond(p)
                 }
             }
@@ -187,7 +213,6 @@ fun Route.adminRoutes() {
                         throw HttpException(HttpStatusCode.NotFound, "Device not found")
                     }
 
-                    // NEW: auto create refresh_config command after link success
                     runCatching {
                         commandService.adminCreate(
                             deviceId = id,
