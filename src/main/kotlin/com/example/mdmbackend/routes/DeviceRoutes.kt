@@ -232,6 +232,7 @@ fun Route.deviceRoutes(cfg: AppConfig) {
                 val req = call.receive<DeviceStateSnapshotRequest>()
                 requireDeviceCodeMatchIfDevice(principal, req.deviceCode)
 
+                // Service handles full business validation and rejects invalid telemetry with HTTP 400.
                 val resp = deviceService.upsertStateSnapshot(
                     req = req,
                     actorType = principal.role.name,
@@ -251,13 +252,8 @@ fun Route.deviceRoutes(cfg: AppConfig) {
                 val req = call.receive<DevicePolicyStateReportRequest>()
                 requireDeviceCodeMatchIfDevice(principal, req.deviceCode)
 
-                val normalizedStatus = req.policyApplyStatus.uppercase()
-                if (normalizedStatus !in setOf("PENDING", "SUCCESS", "FAILED", "PARTIAL")) {
-                    throw HttpException(HttpStatusCode.BadRequest, "Invalid policyApplyStatus: ${req.policyApplyStatus}")
-                }
-
                 val resp: DevicePolicyStateResponse = deviceService.upsertPolicyState(
-                    req = req.copy(policyApplyStatus = normalizedStatus),
+                    req = req,
                     actorType = principal.role.name,
                     actorUserId = principal.userId
                 ) ?: throw HttpException(HttpStatusCode.NotFound, "Device not found")

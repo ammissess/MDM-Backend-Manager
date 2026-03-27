@@ -1,5 +1,8 @@
 package com.example.mdmbackend.dto
 
+import com.example.mdmbackend.middleware.HttpException
+import com.example.mdmbackend.model.CommandType
+import io.ktor.http.HttpStatusCode
 import kotlinx.serialization.Serializable
 
 @Serializable
@@ -7,7 +10,14 @@ data class AdminCreateCommandRequest(
     val type: String,
     val payload: String = "{}",
     val ttlSeconds: Long = 600,
-)
+) {
+    fun requireCommandType(): CommandType =
+        CommandType.fromInput(type) ?: throw HttpException(
+            status = HttpStatusCode.BadRequest,
+            message = "Invalid command type '$type'. Supported values: ${CommandType.supportedWireValues()}",
+            code = "INVALID_COMMAND_TYPE"
+        )
+}
 
 @Serializable
 data class AdminCancelCommandRequest(

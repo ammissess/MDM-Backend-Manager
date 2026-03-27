@@ -137,7 +137,12 @@ data class DeviceStateSnapshotRequest(
     val lastBootAtEpochMillis: Long? = null,
     val errorCode: String? = null,
     val errorMessage: String? = null,
-)
+) {
+    companion object {
+        val ALLOWED_NETWORK_TYPES: Set<String> = setOf("WIFI", "CELLULAR", "OFFLINE", "UNKNOWN")
+        const val MAX_FUTURE_DRIFT_MILLIS: Long = 5 * 60 * 1000
+    }
+}
 
 @Serializable
 data class DeviceStateSnapshotResponse(
@@ -156,7 +161,12 @@ data class DevicePolicyStateReportRequest(
     val policyApplyError: String? = null,
     val policyApplyErrorCode: String? = null,
     val policyAppliedAtEpochMillis: Long? = null,
-)
+) {
+    companion object {
+        val ALLOWED_STATUSES: Set<String> = setOf("PENDING", "SUCCESS", "FAILED", "PARTIAL")
+        const val MAX_FUTURE_DRIFT_MILLIS: Long = 5 * 60 * 1000
+    }
+}
 
 @Serializable
 data class DevicePolicyStateResponse(

@@ -11,6 +11,7 @@ import com.example.mdmbackend.dto.ProfileCreateRequest
 import com.example.mdmbackend.dto.ProfileUpdateRequest
 import com.example.mdmbackend.middleware.HttpException
 import com.example.mdmbackend.middleware.UserPrincipal
+import com.example.mdmbackend.model.CommandType
 import com.example.mdmbackend.model.Role
 import com.example.mdmbackend.repository.DeviceAppUsageRepository
 import com.example.mdmbackend.repository.DeviceCommandRepository
@@ -57,7 +58,7 @@ fun Route.adminRoutes() {
                 commandService.adminCreate(
                     deviceId = deviceId,
                     createdByUserId = actorUserId,
-                    req = AdminCreateCommandRequest(type = "refresh_config", payload = "{}", ttlSeconds = 600)
+                    req = AdminCreateCommandRequest(type = CommandType.REFRESH_CONFIG.wireValue, payload = "{}", ttlSeconds = 600)
                 )
             }
         }
@@ -202,7 +203,7 @@ fun Route.adminRoutes() {
                         commandService.adminCreate(
                             deviceId = id,
                             createdByUserId = principal.userId,
-                            req = AdminCreateCommandRequest(type = "refresh_config", payload = "{}", ttlSeconds = 600)
+                            req = AdminCreateCommandRequest(type = CommandType.REFRESH_CONFIG.wireValue, payload = "{}", ttlSeconds = 600)
                         )
                     }
 
