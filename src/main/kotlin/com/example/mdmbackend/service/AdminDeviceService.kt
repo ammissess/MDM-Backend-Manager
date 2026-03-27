@@ -3,6 +3,10 @@ package com.example.mdmbackend.service
 import com.example.mdmbackend.dto.DeviceDetailResponse
 import com.example.mdmbackend.dto.DeviceResponse
 import com.example.mdmbackend.dto.AdminCreateCommandRequest
+import com.example.mdmbackend.dto.AdminDeviceEventView
+import com.example.mdmbackend.dto.AdminDeviceEventsFilter
+import com.example.mdmbackend.dto.ComplianceSummary
+import com.example.mdmbackend.dto.HealthSummary
 import com.example.mdmbackend.model.CommandType
 import com.example.mdmbackend.repository.DeviceRepository
 import com.example.mdmbackend.repository.ProfileRepository
@@ -16,11 +20,40 @@ class AdminDeviceService(
     private val audit: AuditService,
     private val eventBus: EventBus = EventBusHolder.bus,
 ) {
+    companion object {
+        private const val ONLINE_WINDOW_MILLIS: Long = 5 * 60 * 1000
+        private const val TELEMETRY_FRESH_WINDOW_MILLIS: Long = 10 * 60 * 1000
+    }
+
     fun list(): List<DeviceResponse> = devices.list().map { it.toDeviceResponse() }
 
     fun getById(id: UUID): DeviceResponse? = devices.findById(id)?.toDeviceResponse()
 
     fun getDetailById(id: UUID): DeviceDetailResponse? = devices.findDetailById(id)?.toDeviceDetailResponse()
+
+    fun listEvents(deviceId: UUID, filter: AdminDeviceEventsFilter): List<AdminDeviceEventView> =
+        devices.listEvents(
+            deviceId = deviceId,
+            limit = filter.limit,
+            category = filter.category,
+            severity = filter.severity,
+            type = filter.type,
+            errorCode = filter.errorCode,
+            fromEpochMillis = filter.fromEpochMillis,
+            toEpochMillis = filter.toEpochMillis,
+        ).map { event ->
+            AdminDeviceEventView(
+                id = event.id.toString(),
+                deviceId = event.deviceId.toString(),
+                type = event.type,
+                category = event.category,
+                severity = event.severity,
+                payload = event.payload,
+                errorCode = event.errorCode,
+                message = event.message,
+                createdAtEpochMillis = event.createdAt.toEpochMilli(),
+            )
+        }
 
     fun linkDeviceToUserCode(deviceId: UUID, userCode: String?, actorUserId: UUID? = null): DeviceResponse? {
         val before = devices.findById(deviceId) ?: return null
@@ -149,7 +182,32 @@ class AdminDeviceService(
             policyApplyError = policyApplyError,
             policyApplyErrorCode = policyApplyErrorCode,
             lastPolicyAppliedAtEpochMillis = lastPolicyAppliedAt?.toEpochMilli(),
+            healthSummary = toHealthSummary(),
+            complianceSummary = toComplianceSummary(),
             status = status,
             lastSeenAtEpochMillis = lastSeenAt.toEpochMilli(),
         )
+
+    private fun com.example.mdmbackend.repository.DeviceRecord.toHealthSummary(): HealthSummary {
+        val nowMillis = System.currentTimeMillis()
+        val lastSeenMillis = lastSeenAt.toEpochMilli()
+        val isOnline = nowMillis - lastSeenMillis <= ONLINE_WINDOW_MILLIS
+        val telemetryFreshness = when (val telemetryMillis = lastTelemetryAt?.toEpochMilli()) {
+            null -> "UNKNOWN"
+            else -> if (nowMillis - telemetryMillis <= TELEMETRY_FRESH_WINDOW_MILLIS) "FRESH" else "STALE"
+        }
+
+        return HealthSummary(
+            isOnline = isOnline,
+            telemetryFreshness = telemetryFreshness,
+        )
+    }
+
+    private fun com.example.mdmbackend.repository.DeviceRecord.toComplianceSummary(): ComplianceSummary {
+        val isCompliant = desiredConfigHash != null &&
+            desiredConfigHash == appliedConfigHash &&
+            policyApplyStatus == "SUCCESS"
+
+        return ComplianceSummary(isCompliant = isCompliant)
+    }
 }

@@ -130,8 +130,6 @@ class ProfileService(
             disableStatusBar = disableStatusBar,
             kioskMode = kioskMode,
             blockUninstall = blockUninstall,
-            showWifi = showWifi,
-            showBluetooth = showBluetooth,
             updatedAtEpochMillis = updatedAt.toEpochMillis(),
         )
     }

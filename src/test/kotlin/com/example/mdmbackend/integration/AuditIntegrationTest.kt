@@ -230,6 +230,132 @@ class AuditIntegrationTest {
     }
 
     @Test
+    fun testAdminAuditFilters_ShouldSupportTargetTimeAndPolicyLifecycleActions() = testApplication {
+        configureAuditTestApplication()
+        val client = createClient {
+            install(io.ktor.client.plugins.contentnegotiation.ContentNegotiation) { json() }
+        }
+
+        val adminToken = TestAuthHelper.loginAdmin(client)
+
+        val profileResp = client.post("/api/admin/profiles") {
+            contentType(ContentType.Application.Json)
+            header("Authorization", "Bearer $adminToken")
+            setBody("""{"userCode":"AUDIT_FILTER_UC_001","name":"Audit Filter Profile","allowedApps":["com.example.app"]}""")
+        }
+        assertEquals(HttpStatusCode.Created, profileResp.status)
+
+        val deviceCode = "AUDIT_FILTER_DEV_001"
+        val deviceToken = TestAuthHelper.loginDevice(client, deviceCode)
+        val registerResp = client.post("/api/device/register") {
+            contentType(ContentType.Application.Json)
+            header("Authorization", "Bearer $deviceToken")
+            setBody("""{"deviceCode":"$deviceCode"}""")
+        }
+        assertEquals(HttpStatusCode.OK, registerResp.status)
+        val deviceId = TestJsonHelper.extractField(registerResp.bodyAsText(), "deviceId")
+
+        val linkResp = client.put("/api/admin/devices/$deviceId/link") {
+            contentType(ContentType.Application.Json)
+            header("Authorization", "Bearer $adminToken")
+            setBody("""{"userCode":"AUDIT_FILTER_UC_001"}""")
+        }
+        assertEquals(HttpStatusCode.OK, linkResp.status)
+
+        val now = System.currentTimeMillis()
+        val successResp = client.post("/api/device/policy-state") {
+            contentType(ContentType.Application.Json)
+            header("Authorization", "Bearer $deviceToken")
+            setBody(
+                """
+                {
+                  "deviceCode":"$deviceCode",
+                  "policyApplyStatus":"SUCCESS",
+                  "appliedConfigVersionEpochMillis":$now,
+                  "appliedConfigHash":"policy_hash_success",
+                  "policyAppliedAtEpochMillis":$now
+                }
+                """.trimIndent()
+            )
+        }
+        assertEquals(HttpStatusCode.OK, successResp.status)
+
+        val failedResp = client.post("/api/device/policy-state") {
+            contentType(ContentType.Application.Json)
+            header("Authorization", "Bearer $deviceToken")
+            setBody(
+                """
+                {
+                  "deviceCode":"$deviceCode",
+                  "policyApplyStatus":"FAILED",
+                  "policyApplyErrorCode":"POLICY_APPLY_FAILED",
+                  "policyApplyError":"Apply failed"
+                }
+                """.trimIndent()
+            )
+        }
+        assertEquals(HttpStatusCode.OK, failedResp.status)
+
+        val desiredUrl = "/api/admin/audit?action=POLICY_DESIRED_CHANGED&targetType=DEVICE&targetId=$deviceId&limit=50&offset=0"
+        val desiredChanged = client.get(desiredUrl) {
+            header("Authorization", "Bearer $adminToken")
+        }
+        assertEquals(HttpStatusCode.OK, desiredChanged.status)
+        val desiredBody = desiredChanged.bodyAsText()
+        println("DAY34_AUDIT_FILTER_URL=$desiredUrl")
+        println("DAY34_AUDIT_FILTER_RESPONSE=$desiredBody")
+        assertTrue(desiredBody.contains("POLICY_DESIRED_CHANGED"))
+        assertTrue(desiredBody.contains(deviceId))
+
+        val refreshUrl = "/api/admin/audit?action=POLICY_REFRESH_ENQUEUED&targetType=COMMAND&limit=50&offset=0"
+        val refreshEnqueued = client.get(refreshUrl) {
+            header("Authorization", "Bearer $adminToken")
+        }
+        assertEquals(HttpStatusCode.OK, refreshEnqueued.status)
+        val refreshBody = refreshEnqueued.bodyAsText()
+        println("DAY34_AUDIT_POLICY_REFRESH_URL=$refreshUrl")
+        println("DAY34_AUDIT_POLICY_REFRESH_RESPONSE=$refreshBody")
+        assertTrue(refreshBody.contains("POLICY_REFRESH_ENQUEUED"))
+        assertTrue(refreshBody.contains("COMMAND"))
+
+        val successUrl = "/api/admin/audit?action=POLICY_APPLY_REPORTED_SUCCESS&actorType=DEVICE&targetId=$deviceCode&limit=50&offset=0"
+        val successFiltered = client.get(successUrl) {
+            header("Authorization", "Bearer $adminToken")
+        }
+        assertEquals(HttpStatusCode.OK, successFiltered.status)
+        val successBody = successFiltered.bodyAsText()
+        println("DAY34_AUDIT_POLICY_SUCCESS_URL=$successUrl")
+        println("DAY34_AUDIT_POLICY_SUCCESS_RESPONSE=$successBody")
+        assertTrue(successBody.contains("POLICY_APPLY_REPORTED_SUCCESS"))
+        assertTrue(successBody.contains(deviceCode))
+
+        val failedUrl = "/api/admin/audit?action=POLICY_APPLY_REPORTED_FAILED&actorType=DEVICE&targetId=$deviceCode&limit=50&offset=0"
+        val failedFiltered = client.get(failedUrl) {
+            header("Authorization", "Bearer $adminToken")
+        }
+        assertEquals(HttpStatusCode.OK, failedFiltered.status)
+        val failedBody = failedFiltered.bodyAsText()
+        println("DAY34_AUDIT_POLICY_FAILED_URL=$failedUrl")
+        println("DAY34_AUDIT_POLICY_FAILED_RESPONSE=$failedBody")
+        assertTrue(failedBody.contains("POLICY_APPLY_REPORTED_FAILED"))
+        assertTrue(failedBody.contains(deviceCode))
+
+        val futureWindow = client.get("/api/admin/audit?fromEpochMillis=${now + 3_600_000}&limit=50&offset=0") {
+            header("Authorization", "Bearer $adminToken")
+        }
+        assertEquals(HttpStatusCode.OK, futureWindow.status)
+        assertEquals(0, """\"id\"\s*:""".toRegex().findAll(futureWindow.bodyAsText()).count())
+
+        val pagedLogin = client.get("/api/admin/audit?action=LOGIN&limit=1&offset=1") {
+            header("Authorization", "Bearer $adminToken")
+        }
+        assertEquals(HttpStatusCode.OK, pagedLogin.status)
+        val pagedBody = pagedLogin.bodyAsText()
+        assertTrue("""\"limit\"\s*:\s*1""".toRegex().containsMatchIn(pagedBody))
+        assertTrue("""\"offset\"\s*:\s*1""".toRegex().containsMatchIn(pagedBody))
+    }
+
+    @Test
     fun testProfileDesiredLifecycle_ChangedThenUnchangedUpdate_ShouldEnqueueOnceAndAudit() = testApplication {
         configureAuditTestApplication()
         val client = createClient {

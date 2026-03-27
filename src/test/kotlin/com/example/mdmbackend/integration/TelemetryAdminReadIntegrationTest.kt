@@ -18,6 +18,7 @@ import io.ktor.server.testing.ApplicationTestBuilder
 import io.ktor.server.testing.testApplication
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFalse
 import kotlin.test.assertNotEquals
 import kotlin.test.assertTrue
 
@@ -97,12 +98,100 @@ class TelemetryAdminReadIntegrationTest {
         assertEquals(HttpStatusCode.OK, detailResp.status)
 
         val body = detailResp.bodyAsText()
+        assertTrue(body.contains("healthSummary"))
+        assertTrue(body.contains("complianceSummary"))
         assertTrue(body.contains("networkType"))
         assertTrue(body.contains("WIFI"))
         assertTrue(body.contains("policyApplyStatus"))
         assertTrue(body.contains("SUCCESS"))
+        assertTrue(body.contains("lastSeenAtEpochMillis"))
+        assertTrue(body.contains("appliedConfigHash"))
         assertTrue(!body.contains("desired_hash_001"))
         assertTrue(body.contains("applied_hash_001"))
+    }
+
+    @Test
+    fun testDetailComplianceSummary_ShouldBeTrueWhenDesiredEqualsAppliedAndPolicySuccess() = testApplication {
+        configureTelemetryTestApplication()
+        val client = createClient {
+            install(io.ktor.client.plugins.contentnegotiation.ContentNegotiation) { json() }
+        }
+
+        val adminToken = TestAuthHelper.loginAdmin(client)
+        val profileResp = client.post("/api/admin/profiles") {
+            contentType(ContentType.Application.Json)
+            header("Authorization", "Bearer $adminToken")
+            setBody(
+                """
+                {
+                  "userCode":"DAY3_3_USER_001",
+                  "name":"Day3-3 Profile",
+                  "allowedApps":["com.example.app"]
+                }
+                """.trimIndent()
+            )
+        }
+        assertEquals(HttpStatusCode.Created, profileResp.status)
+
+        val deviceCode = "DAY3_3_DEV_001"
+        val deviceToken = TestAuthHelper.loginDevice(client, deviceCode)
+        val registerResp = client.post("/api/device/register") {
+            contentType(ContentType.Application.Json)
+            header("Authorization", "Bearer $deviceToken")
+            setBody("""{"deviceCode":"$deviceCode"}""")
+        }
+        assertEquals(HttpStatusCode.OK, registerResp.status)
+        val deviceId = TestJsonHelper.extractField(registerResp.bodyAsText(), "deviceId")
+
+        val linkResp = client.put("/api/admin/devices/$deviceId/link") {
+            contentType(ContentType.Application.Json)
+            header("Authorization", "Bearer $adminToken")
+            setBody("""{"userCode":"DAY3_3_USER_001"}""")
+        }
+        assertEquals(HttpStatusCode.OK, linkResp.status)
+
+        val detailAfterLinkResp = client.get("/api/admin/devices/$deviceId") {
+            header("Authorization", "Bearer $adminToken")
+        }
+        assertEquals(HttpStatusCode.OK, detailAfterLinkResp.status)
+        val desiredHash = TestJsonHelper.extractField(detailAfterLinkResp.bodyAsText(), "desiredConfigHash")
+        assertTrue(desiredHash.isNotBlank())
+
+        val now = System.currentTimeMillis()
+        val policyResp = client.post("/api/device/policy-state") {
+            contentType(ContentType.Application.Json)
+            header("Authorization", "Bearer $deviceToken")
+            setBody(
+                """
+                {
+                  "deviceCode":"$deviceCode",
+                  "appliedConfigVersionEpochMillis":$now,
+                  "appliedConfigHash":"$desiredHash",
+                  "policyApplyStatus":"SUCCESS",
+                  "policyAppliedAtEpochMillis":$now
+                }
+                """.trimIndent()
+            )
+        }
+        assertEquals(HttpStatusCode.OK, policyResp.status)
+
+        val detailResp = client.get("/api/admin/devices/$deviceId") {
+            header("Authorization", "Bearer $adminToken")
+        }
+        assertEquals(HttpStatusCode.OK, detailResp.status)
+
+        val body = detailResp.bodyAsText()
+        assertTrue(body.contains("healthSummary"))
+        assertTrue(body.contains("complianceSummary"))
+        val isCompliant = "\"isCompliant\"\\s*:\\s*(true|false)".toRegex()
+            .find(body)
+            ?.groupValues
+            ?.get(1)
+            ?.toBooleanStrictOrNull()
+        assertEquals(true, isCompliant)
+        assertTrue(body.contains("desiredConfigHash"))
+        assertTrue(body.contains("appliedConfigHash"))
+        assertTrue(body.contains("policyApplyStatus"))
     }
 
     @Test
@@ -278,6 +367,95 @@ class TelemetryAdminReadIntegrationTest {
     }
 
     @Test
+    fun testStructuredEvents_AdminCanFilterByCategorySeverityTypeErrorAndTime() = testApplication {
+        configureTelemetryTestApplication()
+        val client = createClient {
+            install(io.ktor.client.plugins.contentnegotiation.ContentNegotiation) { json() }
+        }
+
+        val deviceCode = "TEST_EVT_FILTER_001"
+        val deviceToken = TestAuthHelper.loginDevice(client, deviceCode)
+        val registerResp = client.post("/api/device/register") {
+            contentType(ContentType.Application.Json)
+            header("Authorization", "Bearer $deviceToken")
+            setBody("""{"deviceCode":"$deviceCode"}""")
+        }
+        assertEquals(HttpStatusCode.OK, registerResp.status)
+        val deviceId = TestJsonHelper.extractField(registerResp.bodyAsText(), "deviceId")
+
+        val oldEventResp = client.post("/api/device/$deviceCode/events") {
+            contentType(ContentType.Application.Json)
+            header("Authorization", "Bearer $deviceToken")
+            setBody(
+                """
+                {
+                  "type":"policy_apply",
+                  "category":"POLICY",
+                  "severity":"ERROR",
+                  "payload":"{}",
+                  "errorCode":"POLICY_OLD",
+                  "message":"older policy error"
+                }
+                """.trimIndent()
+            )
+        }
+        assertEquals(HttpStatusCode.OK, oldEventResp.status)
+        Thread.sleep(5)
+
+        val newestEventResp = client.post("/api/device/$deviceCode/events") {
+            contentType(ContentType.Application.Json)
+            header("Authorization", "Bearer $deviceToken")
+            setBody(
+                """
+                {
+                  "type":"policy_apply",
+                  "category":"POLICY",
+                  "severity":"ERROR",
+                  "payload":"{}",
+                  "errorCode":"POLICY_NEW",
+                  "message":"newest policy error"
+                }
+                """.trimIndent()
+            )
+        }
+        assertEquals(HttpStatusCode.OK, newestEventResp.status)
+
+        val adminToken = TestAuthHelper.loginAdmin(client)
+
+        val newestOnlyResp = client.get("/api/admin/devices/$deviceId/events?limit=1") {
+            header("Authorization", "Bearer $adminToken")
+        }
+        assertEquals(HttpStatusCode.OK, newestOnlyResp.status)
+        val newestOnlyBody = newestOnlyResp.bodyAsText()
+        assertTrue(newestOnlyBody.contains("newest policy error"))
+        assertFalse(newestOnlyBody.contains("older policy error"))
+
+        val now = System.currentTimeMillis()
+        val filteredUrl = "/api/admin/devices/$deviceId/events" +
+            "?category=policy&severity=error&type=policy_apply&errorCode=POLICY_NEW" +
+            "&fromEpochMillis=${now - 60_000}&toEpochMillis=${now + 60_000}&limit=10"
+        val filteredResp = client.get(filteredUrl) {
+            header("Authorization", "Bearer $adminToken")
+        }
+        assertEquals(HttpStatusCode.OK, filteredResp.status)
+        val filteredBody = filteredResp.bodyAsText()
+        println("DAY34_EVENTS_FILTER_URL=$filteredUrl")
+        println("DAY34_EVENTS_FILTER_RESPONSE=$filteredBody")
+        assertTrue(filteredBody.contains("POLICY_NEW"))
+        assertTrue(filteredBody.contains("newest policy error"))
+        assertFalse(filteredBody.contains("POLICY_OLD"))
+
+        val futureWindowResp = client.get(
+            "/api/admin/devices/$deviceId/events?fromEpochMillis=${now + 3_600_000}&limit=10"
+        ) {
+            header("Authorization", "Bearer $adminToken")
+        }
+        assertEquals(HttpStatusCode.OK, futureWindowResp.status)
+        val futureWindowBody = futureWindowResp.bodyAsText()
+        assertEquals(0, """\"id\"\s*:""".toRegex().findAll(futureWindowBody).count())
+    }
+
+    @Test
     fun testPolicyStateValidationRules_ShouldEnforceContract() = testApplication {
         configureTelemetryTestApplication()
         val client = createClient {
@@ -391,15 +569,16 @@ class TelemetryAdminReadIntegrationTest {
                   "disableCamera":false,
                   "disableStatusBar":true,
                   "kioskMode":true,
-                  "blockUninstall":true,
-                  "showWifi":true,
-                  "showBluetooth":true
+                  "blockUninstall":true
                 }
                 """.trimIndent()
             )
         }
         assertEquals(HttpStatusCode.Created, profileResp.status)
-        val profileId = TestJsonHelper.extractField(profileResp.bodyAsText(), "id")
+        val profileBody = profileResp.bodyAsText()
+        assertFalse(profileBody.contains("\"showWifi\""))
+        assertFalse(profileBody.contains("\"showBluetooth\""))
+        val profileId = TestJsonHelper.extractField(profileBody, "id")
 
         val deviceCode = "DESIRED_DEV_001"
         val deviceToken = TestAuthHelper.loginDevice(client, deviceCode)

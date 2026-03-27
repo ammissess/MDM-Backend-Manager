@@ -2,6 +2,7 @@ package com.example.mdmbackend.service
 
 import com.example.mdmbackend.dto.AuditLogItem
 import com.example.mdmbackend.dto.AuditLogListResponse
+import com.example.mdmbackend.dto.AdminAuditFilter
 import com.example.mdmbackend.repository.AuditRepository
 import java.util.UUID
 import java.util.concurrent.atomic.AtomicBoolean
@@ -186,8 +187,17 @@ class AuditService(
             "\"commandId\":${commandId?.let { "\"$it\"" } ?: "null"}" +
             "}"
 
-    fun list(limit: Int, offset: Long, action: String?, actorType: String?): AuditLogListResponse {
-        val (items, total) = repo.list(limit, offset, action, actorType)
+    fun list(filter: AdminAuditFilter): AuditLogListResponse {
+        val (items, total) = repo.list(
+            limit = filter.limit,
+            offset = filter.offset,
+            action = filter.action,
+            actorType = filter.actorType,
+            targetType = filter.targetType,
+            targetId = filter.targetId,
+            fromEpochMillis = filter.fromEpochMillis,
+            toEpochMillis = filter.toEpochMillis,
+        )
         return AuditLogListResponse(
             items = items.map {
                 AuditLogItem(
@@ -203,8 +213,8 @@ class AuditService(
                 )
             },
             total = total,
-            limit = limit,
-            offset = offset,
+            limit = filter.limit,
+            offset = filter.offset,
         )
     }
 }

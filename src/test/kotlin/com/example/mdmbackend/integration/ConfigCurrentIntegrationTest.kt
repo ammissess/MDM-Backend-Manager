@@ -18,6 +18,7 @@ import io.ktor.server.config.HoconApplicationConfig
 import io.ktor.server.testing.ApplicationTestBuilder
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFalse
 
 class ConfigCurrentIntegrationTest {
 
@@ -168,15 +169,16 @@ class ConfigCurrentIntegrationTest {
                   "disableCamera": true,
                   "disableStatusBar": true,
                   "kioskMode": true,
-                  "blockUninstall": true,
-                  "showWifi": false,
-                  "showBluetooth": true
+                  "blockUninstall": true
                 }
                 """.trimIndent()
             )
         }
         assertEquals(HttpStatusCode.Companion.Created, profileResp.status)
-        val profileId = TestJsonHelper.extractField(profileResp.bodyAsText(), "id")
+        val profileBody = profileResp.bodyAsText()
+        assertFalse(profileBody.contains("\"showWifi\""))
+        assertFalse(profileBody.contains("\"showBluetooth\""))
+        val profileId = TestJsonHelper.extractField(profileBody, "id")
 
         val registerResp = client.post("/api/device/register") {
             contentType(ContentType.Application.Json)
@@ -224,6 +226,8 @@ class ConfigCurrentIntegrationTest {
         assertTrue(currentBody.contains("com.example.alpha"))
         assertTrue(currentBody.contains("disableWifi"))
         assertTrue(currentBody.contains("true"))
+        assertFalse(currentBody.contains("\"showWifi\""))
+        assertFalse(currentBody.contains("\"showBluetooth\""))
 
         val deprecatedResp = client.get("/api/device/config/WRONG_USER_CODE?deviceCode=$deviceCode") {
             header("Authorization", "Bearer $deviceToken")

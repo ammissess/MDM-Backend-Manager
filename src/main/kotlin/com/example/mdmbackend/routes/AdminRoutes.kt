@@ -1,7 +1,8 @@
 package com.example.mdmbackend.routes
 
 import com.example.mdmbackend.dto.AdminCreateCommandRequest
-import com.example.mdmbackend.dto.AdminDeviceEventView
+import com.example.mdmbackend.dto.AdminAuditFilter
+import com.example.mdmbackend.dto.AdminDeviceEventsFilter
 import com.example.mdmbackend.dto.AdminLatestLocationResponse
 import com.example.mdmbackend.dto.AdminResetUnlockPassRequest
 import com.example.mdmbackend.dto.AdminUsageSummaryItem
@@ -56,12 +57,19 @@ fun Route.adminRoutes() {
                     return@get
                 }
 
-                val limit = call.request.queryParameters["limit"]?.toIntOrNull()?.coerceIn(1, 200) ?: 50
-                val offset = call.request.queryParameters["offset"]?.toLongOrNull()?.coerceAtLeast(0) ?: 0L
-                val action = call.request.queryParameters["action"]
-                val actorType = call.request.queryParameters["actorType"]
+                val q = call.request.queryParameters
+                val filter = AdminAuditFilter(
+                    action = q["action"],
+                    actorType = q["actorType"],
+                    targetType = q["targetType"],
+                    targetId = q["targetId"],
+                    fromEpochMillis = q["fromEpochMillis"]?.toLongOrNull(),
+                    toEpochMillis = q["toEpochMillis"]?.toLongOrNull(),
+                    limit = q["limit"]?.toIntOrNull()?.coerceIn(1, 200) ?: 50,
+                    offset = q["offset"]?.toLongOrNull()?.coerceAtLeast(0) ?: 0L,
+                )
 
-                call.respond(audit.list(limit = limit, offset = offset, action = action, actorType = actorType))
+                call.respond(audit.list(filter))
             }
 
             route("/profiles") {
@@ -269,23 +277,17 @@ fun Route.adminRoutes() {
                     val deviceId = runCatching { UUID.fromString(call.parameters["id"]!!) }
                         .getOrElse { throw HttpException(HttpStatusCode.BadRequest, "Invalid UUID format: ${call.parameters["id"]}") }
 
-                    val limit = call.request.queryParameters["limit"]?.toIntOrNull() ?: 50
-                    val events = deviceRepo.listEvents(deviceId, limit)
-                    call.respond(
-                        events.map { e ->
-                            AdminDeviceEventView(
-                                id = e.id.toString(),
-                                deviceId = e.deviceId.toString(),
-                                type = e.type,
-                                category = e.category,
-                                severity = e.severity,
-                                payload = e.payload,
-                                errorCode = e.errorCode,
-                                message = e.message,
-                                createdAtEpochMillis = e.createdAt.toEpochMilli()
-                            )
-                        }
+                    val q = call.request.queryParameters
+                    val filter = AdminDeviceEventsFilter(
+                        category = q["category"]?.uppercase(),
+                        severity = q["severity"]?.uppercase(),
+                        type = q["type"],
+                        errorCode = q["errorCode"],
+                        fromEpochMillis = q["fromEpochMillis"]?.toLongOrNull(),
+                        toEpochMillis = q["toEpochMillis"]?.toLongOrNull(),
+                        limit = q["limit"]?.toIntOrNull()?.coerceIn(1, 500) ?: 50,
                     )
+                    call.respond(devices.listEvents(deviceId, filter))
                 }
 
                 get("/{id}/usage/summary") {

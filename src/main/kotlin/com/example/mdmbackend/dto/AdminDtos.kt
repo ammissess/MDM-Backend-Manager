@@ -43,3 +43,36 @@ data class AdminUsageSummaryResponse(
 data class AdminResetUnlockPassRequest(
     val newPassword: String,
 )
+
+@Serializable
+data class HealthSummary(
+    val isOnline: Boolean,
+    val telemetryFreshness: String,
+)
+
+@Serializable
+data class ComplianceSummary(
+    val isCompliant: Boolean,
+)
+
+data class AdminDeviceEventsFilter(
+    val category: String? = null,
+    val severity: String? = null,
+    val type: String? = null,
+    val errorCode: String? = null,
+    val fromEpochMillis: Long? = null,
+    val toEpochMillis: Long? = null,
+    val limit: Int = 50,
+)
+
+data class AdminAuditFilter(
+    val action: String? = null,
+    val actorType: String? = null,
+    val targetType: String? = null,
+    val targetId: String? = null,
+    val fromEpochMillis: Long? = null,
+    val toEpochMillis: Long? = null,
+    val limit: Int = 50,
+    val offset: Long = 0,
+)
+
