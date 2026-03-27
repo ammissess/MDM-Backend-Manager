@@ -66,11 +66,17 @@ class AuditService(
                 }
 
                 is TelemetryReceivedEvent -> {
+                    val action = when (event.telemetryType) {
+                        "policy_apply_reported_success" -> "POLICY_APPLY_REPORTED_SUCCESS"
+                        "policy_apply_reported_failed" -> "POLICY_APPLY_REPORTED_FAILED"
+                        else -> "TELEMETRY_RECEIVED"
+                    }
+
                     log(
                         actorType = event.actorType,
                         actorUserId = event.actorUserId,
                         actorDeviceCode = event.deviceCode,
-                        action = "TELEMETRY_RECEIVED",
+                        action = action,
                         targetType = "DEVICE",
                         targetId = event.deviceCode,
                         payloadJson = """{"telemetryType":"${event.telemetryType}"}"""

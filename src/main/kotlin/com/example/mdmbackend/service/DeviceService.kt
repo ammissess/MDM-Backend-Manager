@@ -13,6 +13,7 @@ import com.example.mdmbackend.dto.LocationUpdateRequest
 import com.example.mdmbackend.dto.UsageBatchReportRequest
 import com.example.mdmbackend.dto.UsageBatchReportResponse
 import com.example.mdmbackend.dto.UsageReportRequest
+import com.example.mdmbackend.middleware.HttpException
 import com.example.mdmbackend.model.DeviceStatus
 import com.example.mdmbackend.repository.DeviceAppUsageRepository
 import com.example.mdmbackend.repository.DevicePrivateInfoRepository
@@ -21,6 +22,7 @@ import com.example.mdmbackend.repository.PolicyStateUpsert
 import com.example.mdmbackend.repository.ProfileRepository
 import com.example.mdmbackend.repository.StateSnapshotUpsert
 import com.example.mdmbackend.util.PasswordHasher
+import io.ktor.http.HttpStatusCode
 import java.time.Instant
 import java.util.UUID
 
@@ -117,12 +119,14 @@ class DeviceService(
         actorType: String = "DEVICE",
         actorUserId: UUID? = null,
     ): DeviceStateSnapshotResponse? {
+        val normalizedNetworkType = validateStateSnapshotRequest(req)
+
         val snapshot = StateSnapshotUpsert(
             reportedAt = Instant.ofEpochMilli(req.reportedAtEpochMillis),
             batteryLevel = req.batteryLevel,
             isCharging = req.isCharging,
             wifiEnabled = req.wifiEnabled,
-            networkType = req.networkType,
+            networkType = normalizedNetworkType,
             foregroundPackage = req.foregroundPackage,
             isDeviceOwner = req.isDeviceOwner,
             isLauncherDefault = req.isLauncherDefault,
@@ -165,41 +169,54 @@ class DeviceService(
         actorType: String = "DEVICE",
         actorUserId: UUID? = null,
     ): DevicePolicyStateResponse? {
+        val normalizedReq = validatePolicyStateRequest(req)
+
         val policy = PolicyStateUpsert(
-            desiredConfigVersionEpochMillis = req.desiredConfigVersionEpochMillis,
-            desiredConfigHash = req.desiredConfigHash,
-            appliedConfigVersionEpochMillis = req.appliedConfigVersionEpochMillis,
-            appliedConfigHash = req.appliedConfigHash,
-            policyApplyStatus = req.policyApplyStatus,
-            policyApplyError = req.policyApplyError,
-            policyApplyErrorCode = req.policyApplyErrorCode,
-            policyAppliedAt = req.policyAppliedAtEpochMillis?.let { Instant.ofEpochMilli(it) },
+            desiredConfigVersionEpochMillis = normalizedReq.desiredConfigVersionEpochMillis,
+            desiredConfigHash = normalizedReq.desiredConfigHash,
+            appliedConfigVersionEpochMillis = normalizedReq.appliedConfigVersionEpochMillis,
+            appliedConfigHash = normalizedReq.appliedConfigHash,
+            policyApplyStatus = normalizedReq.policyApplyStatus,
+            policyApplyError = normalizedReq.policyApplyError,
+            policyApplyErrorCode = normalizedReq.policyApplyErrorCode,
+            policyAppliedAt = normalizedReq.policyAppliedAtEpochMillis?.let { Instant.ofEpochMilli(it) },
         )
 
-        val updated = devices.upsertPolicyState(req.deviceCode, policy) ?: return null
+        val updated = devices.upsertPolicyState(normalizedReq.deviceCode, policy) ?: return null
 
-        if (req.policyApplyStatus.equals("FAILED", ignoreCase = true) || !req.policyApplyError.isNullOrBlank()) {
+        if (normalizedReq.policyApplyStatus == "FAILED" || !normalizedReq.policyApplyError.isNullOrBlank()) {
             devices.addStructuredEvent(
                 deviceId = updated.id,
                 type = "policy_apply_result",
                 category = "POLICY",
-                severity = if (req.policyApplyStatus.equals("FAILED", true)) "ERROR" else "WARN",
-                payload = """{"status":"${req.policyApplyStatus}","appliedConfigHash":${req.appliedConfigHash?.let { "\"$it\"" } ?: "null"}}""",
-                errorCode = req.policyApplyErrorCode,
-                message = req.policyApplyError,
+                severity = if (normalizedReq.policyApplyStatus == "FAILED") "ERROR" else "WARN",
+                payload = """{"status":"${normalizedReq.policyApplyStatus}","appliedConfigHash":${normalizedReq.appliedConfigHash?.let { "\"$it\"" } ?: "null"}}""",
+                errorCode = normalizedReq.policyApplyErrorCode,
+                message = normalizedReq.policyApplyError,
             )
         }
 
         eventBus.publish(
             TelemetryReceivedEvent(
                 telemetryType = "policy_state",
-                deviceCode = req.deviceCode,
+                deviceCode = normalizedReq.deviceCode,
                 actorType = actorType,
                 actorUserId = actorUserId,
             )
         )
 
-        return DevicePolicyStateResponse(ok = true, status = req.policyApplyStatus)
+        if (normalizedReq.policyApplyStatus == "SUCCESS" || normalizedReq.policyApplyStatus == "FAILED") {
+            eventBus.publish(
+                TelemetryReceivedEvent(
+                    telemetryType = "policy_apply_reported_${normalizedReq.policyApplyStatus.lowercase()}",
+                    deviceCode = normalizedReq.deviceCode,
+                    actorType = actorType,
+                    actorUserId = actorUserId,
+                )
+            )
+        }
+
+        return DevicePolicyStateResponse(ok = true, status = normalizedReq.policyApplyStatus)
     }
 
     fun getConfigByUserCode(userCode: String): DeviceConfigResponse? =
@@ -286,3 +303,187 @@ class DeviceService(
         return UsageBatchReportResponse(ok = true, inserted = inserted)
     }
 }
+
+private fun validateStateSnapshotRequest(req: DeviceStateSnapshotRequest): String? {
+    val nowMillis = System.currentTimeMillis()
+    val maxAllowedEpochMillis = nowMillis + DeviceStateSnapshotRequest.MAX_FUTURE_DRIFT_MILLIS
+
+    if (req.batteryLevel != null && req.batteryLevel !in 0..100) {
+        throw invalidStateRequest(
+            message = "Invalid field 'batteryLevel': must be between 0 and 100",
+            errorCode = "INVALID_BATTERY_LEVEL"
+        )
+    }
+
+    if (req.storageFreeBytes != null && req.storageFreeBytes < 0) {
+        throw invalidStateRequest(
+            message = "Invalid field 'storageFreeBytes': must be >= 0",
+            errorCode = "INVALID_STORAGE_VALUES"
+        )
+    }
+
+    if (req.storageTotalBytes != null && req.storageTotalBytes < 0) {
+        throw invalidStateRequest(
+            message = "Invalid field 'storageTotalBytes': must be >= 0",
+            errorCode = "INVALID_STORAGE_VALUES"
+        )
+    }
+
+    if (
+        req.storageFreeBytes != null &&
+        req.storageTotalBytes != null &&
+        req.storageFreeBytes > req.storageTotalBytes
+    ) {
+        throw invalidStateRequest(
+            message = "Invalid storage values: 'storageFreeBytes' must be <= 'storageTotalBytes'",
+            errorCode = "INVALID_STORAGE_VALUES"
+        )
+    }
+
+    if (req.ramFreeMb != null && req.ramFreeMb < 0) {
+        throw invalidStateRequest(
+            message = "Invalid field 'ramFreeMb': must be >= 0",
+            errorCode = "INVALID_RAM_VALUES"
+        )
+    }
+
+    if (req.ramTotalMb != null && req.ramTotalMb < 0) {
+        throw invalidStateRequest(
+            message = "Invalid field 'ramTotalMb': must be >= 0",
+            errorCode = "INVALID_RAM_VALUES"
+        )
+    }
+
+    if (req.ramFreeMb != null && req.ramTotalMb != null && req.ramFreeMb > req.ramTotalMb) {
+        throw invalidStateRequest(
+            message = "Invalid RAM values: 'ramFreeMb' must be <= 'ramTotalMb'",
+            errorCode = "INVALID_RAM_VALUES"
+        )
+    }
+
+    if (req.reportedAtEpochMillis > maxAllowedEpochMillis) {
+        throw invalidStateRequest(
+            message = "Invalid field 'reportedAtEpochMillis': timestamp is too far in the future",
+            errorCode = "INVALID_REPORTED_AT"
+        )
+    }
+
+    val normalizedNetworkType = req.networkType?.trim()?.uppercase()
+    if (normalizedNetworkType != null) {
+        if (normalizedNetworkType.isEmpty() || normalizedNetworkType !in DeviceStateSnapshotRequest.ALLOWED_NETWORK_TYPES) {
+            throw invalidStateRequest(
+                message = "Invalid field 'networkType': supported values are ${DeviceStateSnapshotRequest.ALLOWED_NETWORK_TYPES.joinToString(", ")}",
+                errorCode = "INVALID_NETWORK_TYPE"
+            )
+        }
+    }
+
+    if (req.lastBootAtEpochMillis != null) {
+        if (req.lastBootAtEpochMillis > req.reportedAtEpochMillis) {
+            throw invalidStateRequest(
+                message = "Invalid field 'lastBootAtEpochMillis': must be <= 'reportedAtEpochMillis'",
+                errorCode = "INVALID_REPORTED_AT"
+            )
+        }
+
+        if (req.lastBootAtEpochMillis > maxAllowedEpochMillis) {
+            throw invalidStateRequest(
+                message = "Invalid field 'lastBootAtEpochMillis': timestamp is too far in the future",
+                errorCode = "INVALID_REPORTED_AT"
+            )
+        }
+    }
+
+    return normalizedNetworkType
+}
+
+private fun invalidStateRequest(message: String, errorCode: String): HttpException =
+    HttpException(HttpStatusCode.BadRequest, message, errorCode)
+
+private fun validatePolicyStateRequest(req: DevicePolicyStateReportRequest): DevicePolicyStateReportRequest {
+    val normalizedStatus = req.policyApplyStatus.trim().uppercase()
+    if (normalizedStatus !in DevicePolicyStateReportRequest.ALLOWED_STATUSES) {
+        throw invalidPolicyRequest(
+            message = "Invalid field 'policyApplyStatus': supported values are ${DevicePolicyStateReportRequest.ALLOWED_STATUSES.joinToString(", ")}",
+            errorCode = "INVALID_POLICY_STATUS"
+        )
+    }
+
+    val normalizedDesiredHash = req.desiredConfigHash?.trim()?.takeIf { it.isNotEmpty() }
+    val normalizedAppliedHash = req.appliedConfigHash?.trim()?.takeIf { it.isNotEmpty() }
+    val normalizedPolicyError = req.policyApplyError?.trim()?.takeIf { it.isNotEmpty() }
+    val normalizedPolicyErrorCode = req.policyApplyErrorCode?.trim()?.takeIf { it.isNotEmpty() }
+
+    if ((normalizedDesiredHash == null) != (req.desiredConfigVersionEpochMillis == null)) {
+        throw invalidPolicyRequest(
+            message = "Invalid desired config shape: both 'desiredConfigHash' and 'desiredConfigVersionEpochMillis' must be provided together",
+            errorCode = "INVALID_POLICY_STATUS"
+        )
+    }
+
+    if ((normalizedAppliedHash == null) != (req.appliedConfigVersionEpochMillis == null)) {
+        throw invalidPolicyRequest(
+            message = "Invalid applied config shape: both 'appliedConfigHash' and 'appliedConfigVersionEpochMillis' must be provided together",
+            errorCode = "MISSING_APPLIED_CONFIG"
+        )
+    }
+
+    when (normalizedStatus) {
+        "SUCCESS" -> {
+            if (normalizedAppliedHash == null || req.appliedConfigVersionEpochMillis == null) {
+                throw invalidPolicyRequest(
+                    message = "Invalid policy result: 'appliedConfigHash' and 'appliedConfigVersionEpochMillis' are required when policyApplyStatus=SUCCESS",
+                    errorCode = "MISSING_APPLIED_CONFIG"
+                )
+            }
+            if (req.policyApplyError != null && normalizedPolicyError == null) {
+                throw invalidPolicyRequest(
+                    message = "Invalid field 'policyApplyError': must be null or non-blank when policyApplyStatus=SUCCESS",
+                    errorCode = "INVALID_POLICY_STATUS"
+                )
+            }
+        }
+
+        "FAILED" -> {
+            if (normalizedPolicyError == null && normalizedPolicyErrorCode == null) {
+                throw invalidPolicyRequest(
+                    message = "Invalid policy result: 'policyApplyError' or 'policyApplyErrorCode' is required when policyApplyStatus=FAILED",
+                    errorCode = "MISSING_POLICY_ERROR"
+                )
+            }
+        }
+
+        "PARTIAL" -> {
+            if ((normalizedAppliedHash == null) != (req.appliedConfigVersionEpochMillis == null)) {
+                throw invalidPolicyRequest(
+                    message = "Invalid applied config shape: both 'appliedConfigHash' and 'appliedConfigVersionEpochMillis' must be provided together when partially applied",
+                    errorCode = "MISSING_APPLIED_CONFIG"
+                )
+            }
+        }
+
+        "PENDING" -> Unit
+    }
+
+    if (req.policyAppliedAtEpochMillis != null) {
+        val nowMillis = System.currentTimeMillis()
+        val maxAllowedEpochMillis = nowMillis + DevicePolicyStateReportRequest.MAX_FUTURE_DRIFT_MILLIS
+        if (req.policyAppliedAtEpochMillis > maxAllowedEpochMillis) {
+            throw invalidPolicyRequest(
+                message = "Invalid field 'policyAppliedAtEpochMillis': timestamp is too far in the future",
+                errorCode = "INVALID_POLICY_APPLIED_AT"
+            )
+        }
+    }
+
+    return req.copy(
+        policyApplyStatus = normalizedStatus,
+        desiredConfigHash = normalizedDesiredHash,
+        appliedConfigHash = normalizedAppliedHash,
+        policyApplyError = normalizedPolicyError,
+        policyApplyErrorCode = normalizedPolicyErrorCode,
+    )
+}
+
+private fun invalidPolicyRequest(message: String, errorCode: String): HttpException =
+    HttpException(HttpStatusCode.BadRequest, message, errorCode)

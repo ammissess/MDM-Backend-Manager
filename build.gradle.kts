@@ -51,6 +51,7 @@ dependencies {
     testImplementation("io.ktor:ktor-server-test-host:$ktorVersion")
     testImplementation("io.ktor:ktor-client-content-negotiation-jvm:$ktorVersion")
     testImplementation("io.ktor:ktor-serialization-kotlinx-json-jvm:$ktorVersion")
+    testRuntimeOnly("com.h2database:h2:2.2.224")
 }
 
 application {
