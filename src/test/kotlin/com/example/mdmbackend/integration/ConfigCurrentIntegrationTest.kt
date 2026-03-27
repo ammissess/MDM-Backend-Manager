@@ -1,6 +1,5 @@
 package com.example.mdmbackend.integration
 
-import com.example.mdmbackend.module
 import io.ktor.client.request.get
 import io.ktor.client.request.header
 import io.ktor.client.request.post
@@ -13,6 +12,10 @@ import io.ktor.http.contentType
 import io.ktor.serialization.kotlinx.json.json
 import io.ktor.server.testing.testApplication
 import junit.framework.TestCase.assertTrue
+import com.typesafe.config.ConfigFactory
+import com.typesafe.config.ConfigValueFactory
+import io.ktor.server.config.HoconApplicationConfig
+import io.ktor.server.testing.ApplicationTestBuilder
 import kotlin.test.Test
 import kotlin.test.assertEquals
 
@@ -20,7 +23,7 @@ class ConfigCurrentIntegrationTest {
 
     @Test
     fun testConfigCurrent_MissingDeviceCode_ShouldReturn400() = testApplication {
-        application { module() }
+        configureConfigCurrentTestApplication()
         val client = createClient {
             install(io.ktor.client.plugins.contentnegotiation.ContentNegotiation) { json() }
         }
@@ -37,7 +40,7 @@ class ConfigCurrentIntegrationTest {
 
     @Test
     fun testConfigCurrent_DeviceNotFound_ShouldReturn404() = testApplication {
-        application { module() }
+        configureConfigCurrentTestApplication()
         val client = createClient {
             install(io.ktor.client.plugins.contentnegotiation.ContentNegotiation) { json() }
         }
@@ -54,7 +57,7 @@ class ConfigCurrentIntegrationTest {
 
     @Test
     fun testConfigCurrent_LockedDevice_ShouldReturn423() = testApplication {
-        application { module() }
+        configureConfigCurrentTestApplication()
         val client = createClient {
             install(io.ktor.client.plugins.contentnegotiation.ContentNegotiation) { json() }
         }
@@ -94,7 +97,7 @@ class ConfigCurrentIntegrationTest {
 
     @Test
     fun testConfigCurrent_DeviceWithoutProfile_ShouldReturn404() = testApplication {
-        application { module() }
+        configureConfigCurrentTestApplication()
         val client = createClient {
             install(io.ktor.client.plugins.contentnegotiation.ContentNegotiation) { json() }
         }
@@ -141,7 +144,7 @@ class ConfigCurrentIntegrationTest {
 
     @Test
     fun testConfigCurrent_Success_ResolveByDeviceProfileId_NotByUserCodePath() = testApplication {
-        application { module() }
+        configureConfigCurrentTestApplication()
         val client = createClient {
             install(io.ktor.client.plugins.contentnegotiation.ContentNegotiation) { json() }
         }
@@ -232,3 +235,24 @@ class ConfigCurrentIntegrationTest {
         assertTrue(profileId.isNotBlank()) // giữ biến sử dụng để tránh warning/unused
     }
 }
+
+private fun ApplicationTestBuilder.configureConfigCurrentTestApplication() {
+    environment {
+        val dbName = "config_current_integration_${System.nanoTime()}"
+        val baseConfig = ConfigFactory.load()
+        config = HoconApplicationConfig(
+            baseConfig
+                .withValue("mdm.auth.sessionTtlMinutes", ConfigValueFactory.fromAnyRef("43200"))
+                .withValue(
+                    "mdm.db.jdbcUrl",
+                    ConfigValueFactory.fromAnyRef(
+                        "jdbc:h2:mem:$dbName;MODE=MySQL;DATABASE_TO_LOWER=TRUE;DB_CLOSE_DELAY=-1;DB_CLOSE_ON_EXIT=FALSE"
+                    )
+                )
+                .withValue("mdm.db.driver", ConfigValueFactory.fromAnyRef("org.h2.Driver"))
+                .withValue("mdm.db.user", ConfigValueFactory.fromAnyRef("sa"))
+                .withValue("mdm.db.password", ConfigValueFactory.fromAnyRef(""))
+        )
+    }
+}
+

@@ -56,3 +56,12 @@ data class ProfileResponse(
 
     val updatedAtEpochMillis: Long,
 )
+
+fun List<String>.normalizeAllowedApps(): List<String> =
+    asSequence()
+        .map { it.trim() }
+        .filter { it.isNotEmpty() }
+        .distinct()
+        .sorted()
+        .toList()
+
