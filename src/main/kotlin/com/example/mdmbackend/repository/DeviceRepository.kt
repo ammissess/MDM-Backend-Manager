@@ -6,8 +6,10 @@ import com.example.mdmbackend.model.DevicesTable
 import com.example.mdmbackend.model.ProfilesTable
 import com.example.mdmbackend.util.PasswordHasher
 import org.jetbrains.exposed.dao.id.EntityID
+import org.jetbrains.exposed.sql.Op
 import org.jetbrains.exposed.sql.ResultRow
 import org.jetbrains.exposed.sql.SortOrder
+import org.jetbrains.exposed.sql.andWhere
 import org.jetbrains.exposed.sql.insert
 import org.jetbrains.exposed.sql.leftJoin
 import org.jetbrains.exposed.sql.selectAll
@@ -361,9 +363,33 @@ class DeviceRepository {
         true
     }
 
-    fun listEvents(deviceId: UUID, limit: Int): List<EventRecord> = transaction {
-        DeviceEventsTable.selectAll()
-            .where { DeviceEventsTable.deviceId eq EntityID(deviceId, DevicesTable) }
+    fun listEvents(
+        deviceId: UUID,
+        limit: Int,
+        category: String? = null,
+        severity: String? = null,
+        type: String? = null,
+        errorCode: String? = null,
+        fromEpochMillis: Long? = null,
+        toEpochMillis: Long? = null,
+    ): List<EventRecord> = transaction {
+        val deviceRef = EntityID(deviceId, DevicesTable)
+        val predicates = listOfNotNull<Op<Boolean>>(
+            Op.build { DeviceEventsTable.deviceId eq deviceRef },
+            category?.takeIf { it.isNotBlank() }?.let { v -> Op.build { DeviceEventsTable.category eq v } },
+            severity?.takeIf { it.isNotBlank() }?.let { v -> Op.build { DeviceEventsTable.severity eq v } },
+            type?.takeIf { it.isNotBlank() }?.let { v -> Op.build { DeviceEventsTable.type eq v } },
+            errorCode?.takeIf { it.isNotBlank() }?.let { v -> Op.build { DeviceEventsTable.errorCode eq v } },
+            fromEpochMillis?.let { v -> Op.build { DeviceEventsTable.createdAt greaterEq Instant.ofEpochMilli(v) } },
+            toEpochMillis?.let { v -> Op.build { DeviceEventsTable.createdAt lessEq Instant.ofEpochMilli(v) } },
+        )
+
+        var query = DeviceEventsTable.selectAll()
+        predicates.forEach { predicate ->
+            query = query.andWhere { predicate }
+        }
+
+        query
             .orderBy(DeviceEventsTable.createdAt, SortOrder.DESC)
             .limit(limit.coerceIn(1, 500))
             .map { row ->

@@ -15,9 +15,6 @@ data class ProfileCreateRequest(
     val disableStatusBar: Boolean = true,
     val kioskMode: Boolean = true,
     val blockUninstall: Boolean = true,
-
-    val showWifi: Boolean = true,
-    val showBluetooth: Boolean = true,
 )
 
 @Serializable
@@ -31,9 +28,6 @@ data class ProfileUpdateRequest(
     val disableStatusBar: Boolean? = null,
     val kioskMode: Boolean? = null,
     val blockUninstall: Boolean? = null,
-
-    val showWifi: Boolean? = null,
-    val showBluetooth: Boolean? = null,
 )
 
 @Serializable
@@ -51,8 +45,6 @@ data class ProfileResponse(
     val kioskMode: Boolean,
     val blockUninstall: Boolean,
 
-    val showWifi: Boolean,
-    val showBluetooth: Boolean,
 
     val updatedAtEpochMillis: Long,
 )

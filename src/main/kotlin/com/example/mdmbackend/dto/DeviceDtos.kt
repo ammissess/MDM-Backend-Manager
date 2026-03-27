@@ -75,6 +75,8 @@ data class DeviceDetailResponse(
     val policyApplyError: String? = null,
     val policyApplyErrorCode: String? = null,
     val lastPolicyAppliedAtEpochMillis: Long? = null,
+    val healthSummary: HealthSummary? = null,
+    val complianceSummary: ComplianceSummary? = null,
     val status: String,
     val lastSeenAtEpochMillis: Long,
 )

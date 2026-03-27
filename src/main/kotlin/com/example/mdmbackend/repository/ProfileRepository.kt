@@ -79,9 +79,6 @@ class ProfileRepository {
             it[kioskMode] = req.kioskMode
             it[blockUninstall] = req.blockUninstall
 
-            it[showWifi] = req.showWifi
-            it[showBluetooth] = req.showBluetooth
-
             it[updatedAt] = Instant.now()
         }
 
@@ -100,9 +97,6 @@ class ProfileRepository {
             req.disableStatusBar?.let { v -> it[disableStatusBar] = v }
             req.kioskMode?.let { v -> it[kioskMode] = v }
             req.blockUninstall?.let { v -> it[blockUninstall] = v }
-
-            req.showWifi?.let { v -> it[showWifi] = v }
-            req.showBluetooth?.let { v -> it[showBluetooth] = v }
 
             it[updatedAt] = Instant.now()
         }
@@ -171,8 +165,6 @@ class ProfileRepository {
             disableStatusBar = p.disableStatusBar,
             kioskMode = p.kioskMode,
             blockUninstall = p.blockUninstall,
-            showWifi = p.showWifi,
-            showBluetooth = p.showBluetooth,
             configVersionEpochMillis = p.updatedAt.toEpochMilli(),
         )
 
@@ -186,8 +178,6 @@ class ProfileRepository {
             disableStatusBar = profile.disableStatusBar,
             kioskMode = profile.kioskMode,
             blockUninstall = profile.blockUninstall,
-            showWifi = profile.showWifi,
-            showBluetooth = profile.showBluetooth,
         )
 
         val canonicalJson = buildCanonicalJson(canonical)
@@ -207,9 +197,7 @@ class ProfileRepository {
             "\"disableCamera\":${config.disableCamera}," +
             "\"disableStatusBar\":${config.disableStatusBar}," +
             "\"kioskMode\":${config.kioskMode}," +
-            "\"blockUninstall\":${config.blockUninstall}," +
-            "\"showWifi\":${config.showWifi}," +
-            "\"showBluetooth\":${config.showBluetooth}" +
+            "\"blockUninstall\":${config.blockUninstall}" +
             "}"
     }
 

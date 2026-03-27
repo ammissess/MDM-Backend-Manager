@@ -3,6 +3,7 @@ package com.example.mdmbackend.repository
 import com.example.mdmbackend.model.AuditLogsTable
 import com.example.mdmbackend.model.UsersTable
 import org.jetbrains.exposed.dao.id.EntityID
+import org.jetbrains.exposed.sql.Op
 import org.jetbrains.exposed.sql.SortOrder
 import org.jetbrains.exposed.sql.andWhere
 import org.jetbrains.exposed.sql.insert
@@ -75,21 +76,30 @@ class AuditRepository {
         offset: Long,
         action: String?,
         actorType: String?,
+        targetType: String?,
+        targetId: String?,
+        fromEpochMillis: Long?,
+        toEpochMillis: Long?,
     ): Pair<List<AuditRecord>, Long> = transaction {
-        var q = AuditLogsTable.selectAll()
+        val predicates = listOfNotNull<Op<Boolean>>(
+            action?.takeIf { it.isNotBlank() }?.let { v -> Op.build { AuditLogsTable.action eq v } },
+            actorType?.takeIf { it.isNotBlank() }?.let { v -> Op.build { AuditLogsTable.actorType eq v.uppercase() } },
+            targetType?.takeIf { it.isNotBlank() }?.let { v -> Op.build { AuditLogsTable.targetType eq v.uppercase() } },
+            targetId?.takeIf { it.isNotBlank() }?.let { v -> Op.build { AuditLogsTable.targetId eq v } },
+            fromEpochMillis?.let { v -> Op.build { AuditLogsTable.createdAt greaterEq Instant.ofEpochMilli(v) } },
+            toEpochMillis?.let { v -> Op.build { AuditLogsTable.createdAt lessEq Instant.ofEpochMilli(v) } },
+        )
 
-        if (!action.isNullOrBlank()) {
-            q = q.andWhere { AuditLogsTable.action eq action }
-        }
-        if (!actorType.isNullOrBlank()) {
-            q = q.andWhere { AuditLogsTable.actorType eq actorType.uppercase() }
+        var q = AuditLogsTable.selectAll()
+        predicates.forEach { predicate ->
+            q = q.andWhere { predicate }
         }
 
         val total = q.count()
 
         val items = q.orderBy(AuditLogsTable.createdAt, SortOrder.DESC)
-            .limit(limit)
-            .offset(offset)
+            .limit(limit.coerceIn(1, 200))
+            .offset(offset.coerceAtLeast(0))
             .map { row ->
                 AuditRecord(
                     id = row[AuditLogsTable.id].value,

@@ -14,9 +14,6 @@ data class DeviceConfigResponse(
     val kioskMode: Boolean,
     val blockUninstall: Boolean,
 
-    val showWifi: Boolean,
-    val showBluetooth: Boolean,
-
     val configVersionEpochMillis: Long,
 )
 
@@ -30,7 +27,5 @@ data class CanonicalDesiredConfig(
     val disableStatusBar: Boolean,
     val kioskMode: Boolean,
     val blockUninstall: Boolean,
-    val showWifi: Boolean,
-    val showBluetooth: Boolean,
 )
 
