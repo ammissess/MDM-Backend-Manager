@@ -10,6 +10,7 @@ import io.ktor.server.config.HoconApplicationConfig
 import io.ktor.server.testing.*
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertNotEquals
 import kotlin.test.assertTrue
 
 class AuditIntegrationTest {
@@ -226,6 +227,178 @@ class AuditIntegrationTest {
         val failedBody = failedAuditResp.bodyAsText()
         assertTrue(failedBody.contains("POLICY_APPLY_REPORTED_FAILED"))
         assertTrue(failedBody.contains(deviceCode))
+    }
+
+    @Test
+    fun testProfileDesiredLifecycle_ChangedThenUnchangedUpdate_ShouldEnqueueOnceAndAudit() = testApplication {
+        configureAuditTestApplication()
+        val client = createClient {
+            install(io.ktor.client.plugins.contentnegotiation.ContentNegotiation) { json() }
+        }
+
+        val adminToken = TestAuthHelper.loginAdmin(client)
+
+        val profileResp = client.post("/api/admin/profiles") {
+            contentType(ContentType.Application.Json)
+            header("Authorization", "Bearer $adminToken")
+            setBody(
+                """
+                {
+                  "userCode":"AUDIT_DESIRED_UC_001",
+                  "name":"Desired lifecycle profile",
+                  "allowedApps":["com.example.a"],
+                  "disableWifi":false
+                }
+                """.trimIndent()
+            )
+        }
+        assertEquals(HttpStatusCode.Created, profileResp.status)
+        val profileId = TestJsonHelper.extractField(profileResp.bodyAsText(), "id")
+
+        val deviceCode = "AUDIT_DESIRED_DEV_001"
+        val deviceToken = TestAuthHelper.loginDevice(client, deviceCode)
+        val registerResp = client.post("/api/device/register") {
+            contentType(ContentType.Application.Json)
+            header("Authorization", "Bearer $deviceToken")
+            setBody("""{"deviceCode":"$deviceCode"}""")
+        }
+        assertEquals(HttpStatusCode.OK, registerResp.status)
+        val deviceId = TestJsonHelper.extractField(registerResp.bodyAsText(), "deviceId")
+
+        val linkResp = client.put("/api/admin/devices/$deviceId/link") {
+            contentType(ContentType.Application.Json)
+            header("Authorization", "Bearer $adminToken")
+            setBody("""{"userCode":"AUDIT_DESIRED_UC_001"}""")
+        }
+        assertEquals(HttpStatusCode.OK, linkResp.status)
+
+        suspend fun refreshCount(): Int {
+            val listResp = client.get("/api/admin/devices/$deviceId/commands?limit=100&offset=0") {
+                header("Authorization", "Bearer $adminToken")
+            }
+            assertEquals(HttpStatusCode.OK, listResp.status)
+            return "\\\"type\\\"\\s*:\\s*\\\"refresh_config\\\"".toRegex().findAll(listResp.bodyAsText()).count()
+        }
+
+        suspend fun actionCount(action: String): Int {
+            val resp = client.get("/api/admin/audit?limit=500&offset=0&action=$action") {
+                header("Authorization", "Bearer $adminToken")
+            }
+            assertEquals(HttpStatusCode.OK, resp.status)
+            return "\\\"action\\\"\\s*:\\s*\\\"$action\\\"".toRegex().findAll(resp.bodyAsText()).count()
+        }
+
+        val refreshBefore = refreshCount()
+        val desiredAuditBefore = actionCount("POLICY_DESIRED_CHANGED")
+        val refreshAuditBefore = actionCount("POLICY_REFRESH_ENQUEUED")
+
+        val changedUpdateResp = client.put("/api/admin/profiles/$profileId") {
+            contentType(ContentType.Application.Json)
+            header("Authorization", "Bearer $adminToken")
+            setBody("""{"disableWifi":true}""")
+        }
+        assertEquals(HttpStatusCode.OK, changedUpdateResp.status)
+
+        val refreshAfterChanged = refreshCount()
+        assertEquals(refreshBefore + 1, refreshAfterChanged)
+
+        val desiredAuditAfterChanged = actionCount("POLICY_DESIRED_CHANGED")
+        val refreshAuditAfterChanged = actionCount("POLICY_REFRESH_ENQUEUED")
+        assertEquals(desiredAuditBefore + 1, desiredAuditAfterChanged)
+        assertEquals(refreshAuditBefore + 1, refreshAuditAfterChanged)
+
+        val noChangeUpdateResp = client.put("/api/admin/profiles/$profileId") {
+            contentType(ContentType.Application.Json)
+            header("Authorization", "Bearer $adminToken")
+            setBody("""{"disableWifi":true}""")
+        }
+        assertEquals(HttpStatusCode.OK, noChangeUpdateResp.status)
+
+        val refreshAfterNoChange = refreshCount()
+        assertEquals(refreshAfterChanged, refreshAfterNoChange)
+    }
+
+    @Test
+    fun testLinkUnlinkDesiredLifecycle_ShouldRecomputeAuditAndEnqueueRefresh() = testApplication {
+        configureAuditTestApplication()
+        val client = createClient {
+            install(io.ktor.client.plugins.contentnegotiation.ContentNegotiation) { json() }
+        }
+
+        val adminToken = TestAuthHelper.loginAdmin(client)
+        val profileResp = client.post("/api/admin/profiles") {
+            contentType(ContentType.Application.Json)
+            header("Authorization", "Bearer $adminToken")
+            setBody("""{"userCode":"AUDIT_DESIRED_UC_002","name":"Profile link unlink","allowedApps":["com.example.app"]}""")
+        }
+        assertEquals(HttpStatusCode.Created, profileResp.status)
+
+        val deviceCode = "AUDIT_DESIRED_DEV_002"
+        val deviceToken = TestAuthHelper.loginDevice(client, deviceCode)
+        val registerResp = client.post("/api/device/register") {
+            contentType(ContentType.Application.Json)
+            header("Authorization", "Bearer $deviceToken")
+            setBody("""{"deviceCode":"$deviceCode"}""")
+        }
+        assertEquals(HttpStatusCode.OK, registerResp.status)
+        val deviceId = TestJsonHelper.extractField(registerResp.bodyAsText(), "deviceId")
+
+        suspend fun readDesiredHash(): String {
+            val detailResp = client.get("/api/admin/devices/$deviceId") {
+                header("Authorization", "Bearer $adminToken")
+            }
+            assertEquals(HttpStatusCode.OK, detailResp.status)
+            return TestJsonHelper.extractField(detailResp.bodyAsText(), "desiredConfigHash")
+        }
+
+        suspend fun refreshCount(): Int {
+            val listResp = client.get("/api/admin/devices/$deviceId/commands?limit=100&offset=0") {
+                header("Authorization", "Bearer $adminToken")
+            }
+            assertEquals(HttpStatusCode.OK, listResp.status)
+            return "\\\"type\\\"\\s*:\\s*\\\"refresh_config\\\"".toRegex().findAll(listResp.bodyAsText()).count()
+        }
+
+        suspend fun actionCount(action: String): Int {
+            val resp = client.get("/api/admin/audit?limit=500&offset=0&action=$action") {
+                header("Authorization", "Bearer $adminToken")
+            }
+            assertEquals(HttpStatusCode.OK, resp.status)
+            return "\\\"action\\\"\\s*:\\s*\\\"$action\\\"".toRegex().findAll(resp.bodyAsText()).count()
+        }
+
+        val desiredBeforeLink = readDesiredHash()
+        assertTrue(desiredBeforeLink.isBlank())
+        val refreshBeforeLink = refreshCount()
+        val desiredAuditBeforeLink = actionCount("POLICY_DESIRED_CHANGED")
+        val refreshAuditBeforeLink = actionCount("POLICY_REFRESH_ENQUEUED")
+
+        val linkResp = client.put("/api/admin/devices/$deviceId/link") {
+            contentType(ContentType.Application.Json)
+            header("Authorization", "Bearer $adminToken")
+            setBody("""{"userCode":"AUDIT_DESIRED_UC_002"}""")
+        }
+        assertEquals(HttpStatusCode.OK, linkResp.status)
+
+        val desiredAfterLink = readDesiredHash()
+        assertTrue(desiredAfterLink.isNotBlank())
+        assertEquals(refreshBeforeLink + 1, refreshCount())
+        assertEquals(desiredAuditBeforeLink + 1, actionCount("POLICY_DESIRED_CHANGED"))
+        assertEquals(refreshAuditBeforeLink + 1, actionCount("POLICY_REFRESH_ENQUEUED"))
+
+        val unlinkResp = client.put("/api/admin/devices/$deviceId/link") {
+            contentType(ContentType.Application.Json)
+            header("Authorization", "Bearer $adminToken")
+            setBody("""{"userCode":null}""")
+        }
+        assertEquals(HttpStatusCode.OK, unlinkResp.status)
+
+        val desiredAfterUnlink = readDesiredHash()
+        assertTrue(desiredAfterUnlink.isBlank())
+        assertNotEquals(desiredAfterLink, desiredAfterUnlink)
+        assertEquals(refreshBeforeLink + 2, refreshCount())
+        assertEquals(desiredAuditBeforeLink + 2, actionCount("POLICY_DESIRED_CHANGED"))
+        assertEquals(refreshAuditBeforeLink + 2, actionCount("POLICY_REFRESH_ENQUEUED"))
     }
 }
 

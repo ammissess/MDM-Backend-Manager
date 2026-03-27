@@ -172,8 +172,6 @@ class DeviceService(
         val normalizedReq = validatePolicyStateRequest(req)
 
         val policy = PolicyStateUpsert(
-            desiredConfigVersionEpochMillis = normalizedReq.desiredConfigVersionEpochMillis,
-            desiredConfigHash = normalizedReq.desiredConfigHash,
             appliedConfigVersionEpochMillis = normalizedReq.appliedConfigVersionEpochMillis,
             appliedConfigHash = normalizedReq.appliedConfigHash,
             policyApplyStatus = normalizedReq.policyApplyStatus,
@@ -409,17 +407,9 @@ private fun validatePolicyStateRequest(req: DevicePolicyStateReportRequest): Dev
         )
     }
 
-    val normalizedDesiredHash = req.desiredConfigHash?.trim()?.takeIf { it.isNotEmpty() }
     val normalizedAppliedHash = req.appliedConfigHash?.trim()?.takeIf { it.isNotEmpty() }
     val normalizedPolicyError = req.policyApplyError?.trim()?.takeIf { it.isNotEmpty() }
     val normalizedPolicyErrorCode = req.policyApplyErrorCode?.trim()?.takeIf { it.isNotEmpty() }
-
-    if ((normalizedDesiredHash == null) != (req.desiredConfigVersionEpochMillis == null)) {
-        throw invalidPolicyRequest(
-            message = "Invalid desired config shape: both 'desiredConfigHash' and 'desiredConfigVersionEpochMillis' must be provided together",
-            errorCode = "INVALID_POLICY_STATUS"
-        )
-    }
 
     if ((normalizedAppliedHash == null) != (req.appliedConfigVersionEpochMillis == null)) {
         throw invalidPolicyRequest(
@@ -478,7 +468,6 @@ private fun validatePolicyStateRequest(req: DevicePolicyStateReportRequest): Dev
 
     return req.copy(
         policyApplyStatus = normalizedStatus,
-        desiredConfigHash = normalizedDesiredHash,
         appliedConfigHash = normalizedAppliedHash,
         policyApplyError = normalizedPolicyError,
         policyApplyErrorCode = normalizedPolicyErrorCode,

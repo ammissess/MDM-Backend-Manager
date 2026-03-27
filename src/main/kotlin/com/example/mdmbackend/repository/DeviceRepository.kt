@@ -8,8 +8,6 @@ import com.example.mdmbackend.util.PasswordHasher
 import org.jetbrains.exposed.dao.id.EntityID
 import org.jetbrains.exposed.sql.ResultRow
 import org.jetbrains.exposed.sql.SortOrder
-import org.jetbrains.exposed.sql.SqlExpressionBuilder.eq
-import org.jetbrains.exposed.sql.andWhere
 import org.jetbrains.exposed.sql.insert
 import org.jetbrains.exposed.sql.leftJoin
 import org.jetbrains.exposed.sql.selectAll
@@ -85,8 +83,6 @@ data class StateSnapshotUpsert(
 )
 
 data class PolicyStateUpsert(
-    val desiredConfigVersionEpochMillis: Long?,
-    val desiredConfigHash: String?,
     val appliedConfigVersionEpochMillis: Long?,
     val appliedConfigHash: String?,
     val policyApplyStatus: String,
@@ -183,8 +179,6 @@ class DeviceRepository {
     fun upsertPolicyState(deviceCode: String, policy: PolicyStateUpsert): DeviceRecord? = transaction {
         val now = Instant.now()
         val updated = DevicesTable.update({ DevicesTable.deviceCode eq deviceCode }) {
-            it[DevicesTable.desiredConfigVersionEpochMillis] = policy.desiredConfigVersionEpochMillis
-            it[DevicesTable.desiredConfigHash] = policy.desiredConfigHash
             it[DevicesTable.appliedConfigVersionEpochMillis] = policy.appliedConfigVersionEpochMillis
             it[DevicesTable.appliedConfigHash] = policy.appliedConfigHash
             it[DevicesTable.policyApplyStatus] = policy.policyApplyStatus
@@ -195,6 +189,82 @@ class DeviceRepository {
         }
         if (updated == 0) return@transaction null
         findByDeviceCode(deviceCode)
+    }
+
+    fun updateDesiredConfigForProfileDevices(
+        profileId: UUID,
+        desiredConfigHash: String,
+        desiredConfigVersionEpochMillis: Long,
+    ): Int = transaction {
+        val rows = DevicesTable
+            .select(
+                DevicesTable.id,
+                DevicesTable.desiredConfigHash,
+            )
+            .where { DevicesTable.profileId eq EntityID(profileId, ProfilesTable) }
+            .toList()
+
+        var changed = 0
+        rows.forEach { row ->
+            val existingHash = row.getOrNull(DevicesTable.desiredConfigHash)
+            if (existingHash != desiredConfigHash) {
+                DevicesTable.update({ DevicesTable.id eq row[DevicesTable.id] }) {
+                    it[DevicesTable.desiredConfigHash] = desiredConfigHash
+                    it[DevicesTable.desiredConfigVersionEpochMillis] = desiredConfigVersionEpochMillis
+                }
+                changed++
+            }
+        }
+
+        changed
+    }
+
+    fun updateDesiredConfigForDevice(
+        deviceId: UUID,
+        desiredConfigHash: String,
+        desiredConfigVersionEpochMillis: Long,
+    ): Boolean = transaction {
+        val row = DevicesTable
+            .select(DevicesTable.desiredConfigHash)
+            .where { DevicesTable.id eq EntityID(deviceId, DevicesTable) }
+            .limit(1)
+            .firstOrNull()
+            ?: return@transaction false
+
+        val existingHash = row.getOrNull(DevicesTable.desiredConfigHash)
+        if (existingHash == desiredConfigHash) {
+            return@transaction false
+        }
+
+        DevicesTable.update({ DevicesTable.id eq EntityID(deviceId, DevicesTable) }) {
+            it[DevicesTable.desiredConfigHash] = desiredConfigHash
+            it[DevicesTable.desiredConfigVersionEpochMillis] = desiredConfigVersionEpochMillis
+        }
+        true
+    }
+
+    fun clearDesiredConfigForDevice(deviceId: UUID): Boolean = transaction {
+        val row = DevicesTable
+            .select(
+                DevicesTable.desiredConfigHash,
+                DevicesTable.desiredConfigVersionEpochMillis,
+            )
+            .where { DevicesTable.id eq EntityID(deviceId, DevicesTable) }
+            .limit(1)
+            .firstOrNull()
+            ?: return@transaction false
+
+        val hasDesired = row.getOrNull(DevicesTable.desiredConfigHash) != null ||
+            row.getOrNull(DevicesTable.desiredConfigVersionEpochMillis) != null
+        if (!hasDesired) {
+            return@transaction false
+        }
+
+        DevicesTable.update({ DevicesTable.id eq EntityID(deviceId, DevicesTable) }) {
+            it[DevicesTable.desiredConfigHash] = null
+            it[DevicesTable.desiredConfigVersionEpochMillis] = null
+        }
+        true
     }
 
     fun addStructuredEvent(

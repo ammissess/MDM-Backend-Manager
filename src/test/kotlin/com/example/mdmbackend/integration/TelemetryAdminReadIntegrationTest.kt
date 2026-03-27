@@ -6,6 +6,7 @@ import com.typesafe.config.ConfigValueFactory
 import io.ktor.client.request.get
 import io.ktor.client.request.header
 import io.ktor.client.request.post
+import io.ktor.client.request.put
 import io.ktor.client.request.setBody
 import io.ktor.client.statement.bodyAsText
 import io.ktor.http.ContentType
@@ -17,6 +18,7 @@ import io.ktor.server.testing.ApplicationTestBuilder
 import io.ktor.server.testing.testApplication
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertNotEquals
 import kotlin.test.assertTrue
 
 class TelemetryAdminReadIntegrationTest {
@@ -99,7 +101,7 @@ class TelemetryAdminReadIntegrationTest {
         assertTrue(body.contains("WIFI"))
         assertTrue(body.contains("policyApplyStatus"))
         assertTrue(body.contains("SUCCESS"))
-        assertTrue(body.contains("desired_hash_001"))
+        assertTrue(!body.contains("desired_hash_001"))
         assertTrue(body.contains("applied_hash_001"))
     }
 
@@ -365,6 +367,226 @@ class TelemetryAdminReadIntegrationTest {
             )
         }
         assertEquals(HttpStatusCode.OK, failedValidResp.status)
+    }
+
+    @Test
+    fun testDesiredConfigOwnership_ReorderShouldKeepHash_UpdateShouldChangeHash() = testApplication {
+        configureTelemetryTestApplication()
+        val client = createClient {
+            install(io.ktor.client.plugins.contentnegotiation.ContentNegotiation) { json() }
+        }
+
+        val adminToken = TestAuthHelper.loginAdmin(client)
+        val profileResp = client.post("/api/admin/profiles") {
+            contentType(ContentType.Application.Json)
+            header("Authorization", "Bearer $adminToken")
+            setBody(
+                """
+                {
+                  "userCode":"DESIRED_USER_001",
+                  "name":"Desired profile",
+                  "allowedApps":["com.example.z","com.example.a"],
+                  "disableWifi":false,
+                  "disableBluetooth":false,
+                  "disableCamera":false,
+                  "disableStatusBar":true,
+                  "kioskMode":true,
+                  "blockUninstall":true,
+                  "showWifi":true,
+                  "showBluetooth":true
+                }
+                """.trimIndent()
+            )
+        }
+        assertEquals(HttpStatusCode.Created, profileResp.status)
+        val profileId = TestJsonHelper.extractField(profileResp.bodyAsText(), "id")
+
+        val deviceCode = "DESIRED_DEV_001"
+        val deviceToken = TestAuthHelper.loginDevice(client, deviceCode)
+        val registerResp = client.post("/api/device/register") {
+            contentType(ContentType.Application.Json)
+            header("Authorization", "Bearer $deviceToken")
+            setBody("""{"deviceCode":"$deviceCode"}""")
+        }
+        assertEquals(HttpStatusCode.OK, registerResp.status)
+        val deviceId = TestJsonHelper.extractField(registerResp.bodyAsText(), "deviceId")
+
+        val linkResp = client.put("/api/admin/devices/$deviceId/link") {
+            contentType(ContentType.Application.Json)
+            header("Authorization", "Bearer $adminToken")
+            setBody("""{"userCode":"DESIRED_USER_001"}""")
+        }
+        assertEquals(HttpStatusCode.OK, linkResp.status)
+
+        suspend fun readDesired(deviceId: String): Pair<String, Long?> {
+            val detailResp = client.get("/api/admin/devices/$deviceId") {
+                header("Authorization", "Bearer $adminToken")
+            }
+            assertEquals(HttpStatusCode.OK, detailResp.status)
+            val body = detailResp.bodyAsText()
+            return TestJsonHelper.extractField(body, "desiredConfigHash") to
+                TestJsonHelper.extractNumberField(body, "desiredConfigVersionEpochMillis")
+        }
+
+        val (initialHash, initialVersion) = readDesired(deviceId)
+        assertTrue(initialHash.isNotBlank())
+        assertTrue(initialVersion != null)
+
+        val reorderResp = client.put("/api/admin/profiles/$profileId/allowed-apps") {
+            contentType(ContentType.Application.Json)
+            header("Authorization", "Bearer $adminToken")
+            setBody("""["com.example.a","com.example.z"]""")
+        }
+        assertEquals(HttpStatusCode.OK, reorderResp.status)
+
+        val (reorderedHash, reorderedVersion) = readDesired(deviceId)
+        assertEquals(initialHash, reorderedHash)
+        assertEquals(initialVersion, reorderedVersion)
+
+        val updateResp = client.put("/api/admin/profiles/$profileId") {
+            contentType(ContentType.Application.Json)
+            header("Authorization", "Bearer $adminToken")
+            setBody("""{"disableWifi":true}""")
+        }
+        assertEquals(HttpStatusCode.OK, updateResp.status)
+
+        val (updatedHash, updatedVersion) = readDesired(deviceId)
+        assertNotEquals(reorderedHash, updatedHash)
+        assertTrue(updatedVersion != null)
+        assertTrue(reorderedVersion == null || updatedVersion >= reorderedVersion)
+    }
+
+    @Test
+    fun testDesiredConfigOwnership_LinkAndUnlinkShouldSetAndClearDesired() = testApplication {
+        configureTelemetryTestApplication()
+        val client = createClient {
+            install(io.ktor.client.plugins.contentnegotiation.ContentNegotiation) { json() }
+        }
+
+        val adminToken = TestAuthHelper.loginAdmin(client)
+        val profileResp = client.post("/api/admin/profiles") {
+            contentType(ContentType.Application.Json)
+            header("Authorization", "Bearer $adminToken")
+            setBody("""{"userCode":"DESIRED_USER_002","name":"Profile 2","allowedApps":["com.example.app"]}""")
+        }
+        assertEquals(HttpStatusCode.Created, profileResp.status)
+
+        val deviceCode = "DESIRED_DEV_002"
+        val deviceToken = TestAuthHelper.loginDevice(client, deviceCode)
+        val registerResp = client.post("/api/device/register") {
+            contentType(ContentType.Application.Json)
+            header("Authorization", "Bearer $deviceToken")
+            setBody("""{"deviceCode":"$deviceCode"}""")
+        }
+        assertEquals(HttpStatusCode.OK, registerResp.status)
+        val deviceId = TestJsonHelper.extractField(registerResp.bodyAsText(), "deviceId")
+
+        suspend fun desiredFromDetail(): Pair<String, Long?> {
+            val detailResp = client.get("/api/admin/devices/$deviceId") {
+                header("Authorization", "Bearer $adminToken")
+            }
+            assertEquals(HttpStatusCode.OK, detailResp.status)
+            val body = detailResp.bodyAsText()
+            return TestJsonHelper.extractField(body, "desiredConfigHash") to
+                TestJsonHelper.extractNumberField(body, "desiredConfigVersionEpochMillis")
+        }
+
+        val (beforeLinkHash, beforeLinkVersion) = desiredFromDetail()
+        assertTrue(beforeLinkHash.isBlank())
+        assertEquals(null, beforeLinkVersion)
+
+        val linkResp = client.put("/api/admin/devices/$deviceId/link") {
+            contentType(ContentType.Application.Json)
+            header("Authorization", "Bearer $adminToken")
+            setBody("""{"userCode":"DESIRED_USER_002"}""")
+        }
+        assertEquals(HttpStatusCode.OK, linkResp.status)
+
+        val (linkedHash, linkedVersion) = desiredFromDetail()
+        assertTrue(linkedHash.isNotBlank())
+        assertTrue(linkedVersion != null)
+
+        val unlinkResp = client.put("/api/admin/devices/$deviceId/link") {
+            contentType(ContentType.Application.Json)
+            header("Authorization", "Bearer $adminToken")
+            setBody("""{"userCode":null}""")
+        }
+        assertEquals(HttpStatusCode.OK, unlinkResp.status)
+
+        val (unlinkedHash, unlinkedVersion) = desiredFromDetail()
+        assertTrue(unlinkedHash.isBlank())
+        assertEquals(null, unlinkedVersion)
+    }
+
+    @Test
+    fun testPolicyState_ShouldNotOverrideBackendOwnedDesired() = testApplication {
+        configureTelemetryTestApplication()
+        val client = createClient {
+            install(io.ktor.client.plugins.contentnegotiation.ContentNegotiation) { json() }
+        }
+
+        val adminToken = TestAuthHelper.loginAdmin(client)
+        val profileResp = client.post("/api/admin/profiles") {
+            contentType(ContentType.Application.Json)
+            header("Authorization", "Bearer $adminToken")
+            setBody("""{"userCode":"DESIRED_USER_003","name":"Profile 3","allowedApps":["com.example.app"]}""")
+        }
+        assertEquals(HttpStatusCode.Created, profileResp.status)
+
+        val deviceCode = "DESIRED_DEV_003"
+        val deviceToken = TestAuthHelper.loginDevice(client, deviceCode)
+        val registerResp = client.post("/api/device/register") {
+            contentType(ContentType.Application.Json)
+            header("Authorization", "Bearer $deviceToken")
+            setBody("""{"deviceCode":"$deviceCode"}""")
+        }
+        assertEquals(HttpStatusCode.OK, registerResp.status)
+        val deviceId = TestJsonHelper.extractField(registerResp.bodyAsText(), "deviceId")
+
+        val linkResp = client.put("/api/admin/devices/$deviceId/link") {
+            contentType(ContentType.Application.Json)
+            header("Authorization", "Bearer $adminToken")
+            setBody("""{"userCode":"DESIRED_USER_003"}""")
+        }
+        assertEquals(HttpStatusCode.OK, linkResp.status)
+
+        suspend fun readDesired(deviceId: String): Pair<String, Long?> {
+            val detailResp = client.get("/api/admin/devices/$deviceId") {
+                header("Authorization", "Bearer $adminToken")
+            }
+            assertEquals(HttpStatusCode.OK, detailResp.status)
+            val body = detailResp.bodyAsText()
+            return TestJsonHelper.extractField(body, "desiredConfigHash") to
+                TestJsonHelper.extractNumberField(body, "desiredConfigVersionEpochMillis")
+        }
+
+        val (baselineHash, baselineVersion) = readDesired(deviceId)
+        assertTrue(baselineHash.isNotBlank())
+        assertTrue(baselineVersion != null)
+
+        val now = System.currentTimeMillis()
+        val policyResp = client.post("/api/device/policy-state") {
+            contentType(ContentType.Application.Json)
+            header("Authorization", "Bearer $deviceToken")
+            setBody(
+                """
+                {
+                  "deviceCode":"$deviceCode",
+                  "desiredConfigVersionEpochMillis":1,
+                  "desiredConfigHash":"agent_owned_should_be_ignored",
+                  "appliedConfigVersionEpochMillis":$now,
+                  "appliedConfigHash":"applied_hash",
+                  "policyApplyStatus":"SUCCESS",
+                  "policyAppliedAtEpochMillis":$now
+                }
+                """.trimIndent()
+            )
+        }
+        assertEquals(HttpStatusCode.OK, policyResp.status)
+
+        val (afterPolicyHash, afterPolicyVersion) = readDesired(deviceId)
+        assertEquals(baselineHash, afterPolicyHash)
+        assertEquals(baselineVersion, afterPolicyVersion)
     }
 }
 

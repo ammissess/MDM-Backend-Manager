@@ -11,7 +11,6 @@ import com.example.mdmbackend.dto.ProfileCreateRequest
 import com.example.mdmbackend.dto.ProfileUpdateRequest
 import com.example.mdmbackend.middleware.HttpException
 import com.example.mdmbackend.middleware.UserPrincipal
-import com.example.mdmbackend.model.CommandType
 import com.example.mdmbackend.model.Role
 import com.example.mdmbackend.repository.DeviceAppUsageRepository
 import com.example.mdmbackend.repository.DeviceCommandRepository
@@ -43,26 +42,10 @@ fun Route.adminRoutes() {
     val privateInfoRepo = DevicePrivateInfoRepository()
     val usageRepo = DeviceAppUsageRepository()
 
-    val profiles = ProfileService(profileRepo)
-    val devices = AdminDeviceService(deviceRepo, profileRepo)
     val commandService = DeviceCommandService(deviceRepo, commandRepo)
     val audit = AuditService()
-
-    fun enqueueRefreshConfigForProfileDevices(profileId: UUID, actorUserId: UUID) {
-        val linkedDeviceIds = deviceRepo.list()
-            .filter { it.profileId == profileId }
-            .map { it.id }
-
-        linkedDeviceIds.forEach { deviceId ->
-            runCatching {
-                commandService.adminCreate(
-                    deviceId = deviceId,
-                    createdByUserId = actorUserId,
-                    req = AdminCreateCommandRequest(type = CommandType.REFRESH_CONFIG.wireValue, payload = "{}", ttlSeconds = 600)
-                )
-            }
-        }
-    }
+    val profiles = ProfileService(profileRepo, deviceRepo, commandService, audit)
+    val devices = AdminDeviceService(deviceRepo, profileRepo, commandService, audit)
 
     authenticate("session") {
         route("/admin") {
@@ -98,7 +81,7 @@ fun Route.adminRoutes() {
                         return@post
                     }
                     val req = call.receive<ProfileCreateRequest>()
-                    call.respond(HttpStatusCode.Created, profiles.create(req))
+                    call.respond(HttpStatusCode.Created, profiles.create(req, principal.userId))
                 }
 
                 get("/{id}") {
@@ -124,9 +107,7 @@ fun Route.adminRoutes() {
                         .getOrElse { throw HttpException(HttpStatusCode.BadRequest, "Invalid UUID format: ${call.parameters["id"]}") }
 
                     val req = call.receive<ProfileUpdateRequest>()
-                    val p = profiles.update(id, req) ?: throw HttpException(HttpStatusCode.NotFound, "Profile not found")
-
-                    enqueueRefreshConfigForProfileDevices(id, principal.userId)
+                    val p = profiles.update(id, req, principal.userId) ?: throw HttpException(HttpStatusCode.NotFound, "Profile not found")
 
                     call.respond(p)
                 }
@@ -154,9 +135,9 @@ fun Route.adminRoutes() {
                         .getOrElse { throw HttpException(HttpStatusCode.BadRequest, "Invalid UUID format: ${call.parameters["id"]}") }
 
                     val apps = call.receive<List<String>>()
-                    val p = profiles.setAllowedApps(id, apps) ?: throw HttpException(HttpStatusCode.NotFound, "Profile not found")
+                    val p = profiles.setAllowedApps(id, apps, principal.userId)
+                        ?: throw HttpException(HttpStatusCode.NotFound, "Profile not found")
 
-                    enqueueRefreshConfigForProfileDevices(id, principal.userId)
                     call.respond(p)
                 }
             }
@@ -199,13 +180,6 @@ fun Route.adminRoutes() {
                     val d = devices.linkDeviceToUserCode(id, body.userCode, principal.userId)
                         ?: throw HttpException(HttpStatusCode.NotFound, "Device not found")
 
-                    runCatching {
-                        commandService.adminCreate(
-                            deviceId = id,
-                            createdByUserId = principal.userId,
-                            req = AdminCreateCommandRequest(type = CommandType.REFRESH_CONFIG.wireValue, payload = "{}", ttlSeconds = 600)
-                        )
-                    }
 
                     call.respond(d)
                 }

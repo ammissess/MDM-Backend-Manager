@@ -1,12 +1,17 @@
 package com.example.mdmbackend.repository
 
 import com.example.mdmbackend.dto.DeviceConfigResponse
+import com.example.mdmbackend.dto.CanonicalDesiredConfig
 import com.example.mdmbackend.dto.ProfileCreateRequest
 import com.example.mdmbackend.dto.ProfileUpdateRequest
+import com.example.mdmbackend.dto.normalizeAllowedApps
 import com.example.mdmbackend.model.ProfileAllowedAppsTable
 import com.example.mdmbackend.model.ProfilesTable
+import kotlinx.serialization.builtins.serializer
+import kotlinx.serialization.json.Json
 import org.jetbrains.exposed.sql.*
 import org.jetbrains.exposed.sql.transactions.transaction
+import java.security.MessageDigest
 import java.time.Instant
 import java.util.UUID
 import org.jetbrains.exposed.sql.SqlExpressionBuilder.eq
@@ -29,6 +34,11 @@ data class ProfileRecord(
     val showBluetooth: Boolean,
 
     val updatedAt: Instant,
+)
+
+data class DesiredConfigFingerprint(
+    val canonicalConfigJson: String,
+    val desiredConfigHash: String,
 )
 
 class ProfileRepository {
@@ -55,6 +65,7 @@ class ProfileRepository {
 
     fun create(req: ProfileCreateRequest): ProfileRecord = transaction {
         val id = UUID.randomUUID()
+        val normalizedAllowedApps = req.allowedApps.normalizeAllowedApps()
         ProfilesTable.insert {
             it[ProfilesTable.id] = id
             it[userCode] = req.userCode
@@ -74,7 +85,7 @@ class ProfileRepository {
             it[updatedAt] = Instant.now()
         }
 
-        setAllowedAppsInternal(id, req.allowedApps)
+        setAllowedAppsInternal(id, normalizedAllowedApps)
         findById(id)!!
     }
 
@@ -114,7 +125,7 @@ class ProfileRepository {
 
     private fun setAllowedAppsInternal(id: UUID, packages: List<String>) {
         ProfileAllowedAppsTable.deleteWhere { ProfileAllowedAppsTable.profileId eq id }
-        packages.distinct().forEach { pkg ->
+        packages.normalizeAllowedApps().forEach { pkg ->
             ProfileAllowedAppsTable.insert {
                 it[profileId] = id
                 it[packageName] = pkg
@@ -164,5 +175,49 @@ class ProfileRepository {
             showBluetooth = p.showBluetooth,
             configVersionEpochMillis = p.updatedAt.toEpochMilli(),
         )
+
+    fun buildDesiredConfigFingerprint(profile: ProfileRecord): DesiredConfigFingerprint {
+        val canonical = CanonicalDesiredConfig(
+            userCode = profile.userCode.trim(),
+            allowedApps = profile.allowedApps.normalizeAllowedApps(),
+            disableWifi = profile.disableWifi,
+            disableBluetooth = profile.disableBluetooth,
+            disableCamera = profile.disableCamera,
+            disableStatusBar = profile.disableStatusBar,
+            kioskMode = profile.kioskMode,
+            blockUninstall = profile.blockUninstall,
+            showWifi = profile.showWifi,
+            showBluetooth = profile.showBluetooth,
+        )
+
+        val canonicalJson = buildCanonicalJson(canonical)
+        return DesiredConfigFingerprint(
+            canonicalConfigJson = canonicalJson,
+            desiredConfigHash = sha256Hex(canonicalJson),
+        )
+    }
+
+    private fun buildCanonicalJson(config: CanonicalDesiredConfig): String {
+        val appsJson = config.allowedApps.joinToString(",") { jsonString(it) }
+        return "{" +
+            "\"userCode\":${jsonString(config.userCode)}," +
+            "\"allowedApps\":[${appsJson}]," +
+            "\"disableWifi\":${config.disableWifi}," +
+            "\"disableBluetooth\":${config.disableBluetooth}," +
+            "\"disableCamera\":${config.disableCamera}," +
+            "\"disableStatusBar\":${config.disableStatusBar}," +
+            "\"kioskMode\":${config.kioskMode}," +
+            "\"blockUninstall\":${config.blockUninstall}," +
+            "\"showWifi\":${config.showWifi}," +
+            "\"showBluetooth\":${config.showBluetooth}" +
+            "}"
+    }
+
+    private fun jsonString(value: String): String = Json.encodeToString(String.serializer(), value)
+
+    private fun sha256Hex(value: String): String {
+        val bytes = MessageDigest.getInstance("SHA-256").digest(value.toByteArray(Charsets.UTF_8))
+        return bytes.joinToString("") { "%02x".format(it) }
+    }
 
 }

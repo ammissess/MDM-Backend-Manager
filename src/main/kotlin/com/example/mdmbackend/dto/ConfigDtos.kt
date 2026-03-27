@@ -19,3 +19,18 @@ data class DeviceConfigResponse(
 
     val configVersionEpochMillis: Long,
 )
+
+@Serializable
+data class CanonicalDesiredConfig(
+    val userCode: String,
+    val allowedApps: List<String>,
+    val disableWifi: Boolean,
+    val disableBluetooth: Boolean,
+    val disableCamera: Boolean,
+    val disableStatusBar: Boolean,
+    val kioskMode: Boolean,
+    val blockUninstall: Boolean,
+    val showWifi: Boolean,
+    val showBluetooth: Boolean,
+)
+

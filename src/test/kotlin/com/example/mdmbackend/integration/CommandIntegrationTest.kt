@@ -252,7 +252,21 @@ class CommandIntegrationTest {
         }
         assertEquals(HttpStatusCode.OK, listAfterUpdate.status)
         val bodyAfterUpdate = listAfterUpdate.bodyAsText()
-        assertEquals(2, countCommandType(bodyAfterUpdate, "refresh_config"))
+        assertEquals(1, countCommandType(bodyAfterUpdate, "refresh_config"))
+
+        val updatePolicyResp = client.put("/api/admin/profiles/$profileId") {
+            contentType(ContentType.Application.Json)
+            header("Authorization", "Bearer $adminToken")
+            setBody("""{"disableWifi":true}""")
+        }
+        assertEquals(HttpStatusCode.OK, updatePolicyResp.status)
+
+        val listAfterPolicyUpdate = client.get("/api/admin/devices/$deviceId/commands?limit=50&offset=0") {
+            header("Authorization", "Bearer $adminToken")
+        }
+        assertEquals(HttpStatusCode.OK, listAfterPolicyUpdate.status)
+        val bodyAfterPolicyUpdate = listAfterPolicyUpdate.bodyAsText()
+        assertEquals(2, countCommandType(bodyAfterPolicyUpdate, "refresh_config"))
     }
 
     @Test

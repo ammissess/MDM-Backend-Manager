@@ -12,6 +12,8 @@ class AuditService(
 
     companion object {
         private val subscribersRegistered = AtomicBoolean(false)
+        const val ACTION_POLICY_DESIRED_CHANGED = "POLICY_DESIRED_CHANGED"
+        const val ACTION_POLICY_REFRESH_ENQUEUED = "POLICY_REFRESH_ENQUEUED"
     }
 
     fun registerEventSubscribers(bus: EventBus) {
@@ -105,6 +107,84 @@ class AuditService(
             payloadJson = payloadJson
         )
     }
+
+    fun logPolicyDesiredChanged(
+        actorUserId: UUID,
+        deviceId: UUID,
+        profileId: UUID?,
+        userCode: String?,
+        oldDesiredHash: String?,
+        newDesiredHash: String?,
+        desiredConfigVersionEpochMillis: Long,
+    ) {
+        log(
+            actorType = "ADMIN",
+            actorUserId = actorUserId,
+            action = ACTION_POLICY_DESIRED_CHANGED,
+            targetType = "DEVICE",
+            targetId = deviceId.toString(),
+            payloadJson = buildDesiredPayload(
+                deviceId = deviceId,
+                profileId = profileId,
+                userCode = userCode,
+                oldDesiredHash = oldDesiredHash,
+                newDesiredHash = newDesiredHash,
+                desiredConfigVersionEpochMillis = desiredConfigVersionEpochMillis,
+                actorUserId = actorUserId,
+                commandId = null,
+            )
+        )
+    }
+
+    fun logPolicyRefreshEnqueued(
+        actorUserId: UUID,
+        deviceId: UUID,
+        profileId: UUID?,
+        userCode: String?,
+        oldDesiredHash: String?,
+        newDesiredHash: String?,
+        desiredConfigVersionEpochMillis: Long,
+        commandId: UUID,
+    ) {
+        log(
+            actorType = "ADMIN",
+            actorUserId = actorUserId,
+            action = ACTION_POLICY_REFRESH_ENQUEUED,
+            targetType = "COMMAND",
+            targetId = commandId.toString(),
+            payloadJson = buildDesiredPayload(
+                deviceId = deviceId,
+                profileId = profileId,
+                userCode = userCode,
+                oldDesiredHash = oldDesiredHash,
+                newDesiredHash = newDesiredHash,
+                desiredConfigVersionEpochMillis = desiredConfigVersionEpochMillis,
+                actorUserId = actorUserId,
+                commandId = commandId,
+            )
+        )
+    }
+
+    private fun buildDesiredPayload(
+        deviceId: UUID,
+        profileId: UUID?,
+        userCode: String?,
+        oldDesiredHash: String?,
+        newDesiredHash: String?,
+        desiredConfigVersionEpochMillis: Long,
+        actorUserId: UUID,
+        commandId: UUID?,
+    ): String =
+        "{" +
+            "\"deviceId\":\"$deviceId\"," +
+            "\"profileId\":${profileId?.let { "\"$it\"" } ?: "null"}," +
+            "\"userCode\":${userCode?.let { "\"$it\"" } ?: "null"}," +
+            "\"oldDesiredHash\":${oldDesiredHash?.let { "\"$it\"" } ?: "null"}," +
+            "\"newDesiredHash\":${newDesiredHash?.let { "\"$it\"" } ?: "null"}," +
+            "\"desiredConfigVersionEpochMillis\":$desiredConfigVersionEpochMillis," +
+            "\"actorUserId\":\"$actorUserId\"," +
+            "\"commandId\":${commandId?.let { "\"$it\"" } ?: "null"}" +
+            "}"
 
     fun list(limit: Int, offset: Long, action: String?, actorType: String?): AuditLogListResponse {
         val (items, total) = repo.list(limit, offset, action, actorType)
