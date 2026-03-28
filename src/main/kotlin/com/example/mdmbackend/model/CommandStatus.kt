@@ -6,4 +6,5 @@ enum class CommandStatus {
     SUCCESS,
     FAILED,
     CANCELLED,
+    EXPIRED,
 }

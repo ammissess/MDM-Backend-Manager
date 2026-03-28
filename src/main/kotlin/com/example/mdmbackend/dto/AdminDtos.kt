@@ -40,6 +40,23 @@ data class AdminUsageSummaryResponse(
 )
 
 @Serializable
+data class AggregateCountItem(
+    val key: String,
+    val count: Long,
+)
+
+@Serializable
+data class AdminTelemetrySummaryResponse(
+    val deviceId: String,
+    val eventCountByType: List<AggregateCountItem>,
+    val eventCountByCategory: List<AggregateCountItem>,
+    val eventCountBySeverity: List<AggregateCountItem>,
+    val policyApplyFailed24h: Long,
+    val policyApplyFailed7d: Long,
+    val generatedAtEpochMillis: Long,
+)
+
+@Serializable
 data class AdminResetUnlockPassRequest(
     val newPassword: String,
 )

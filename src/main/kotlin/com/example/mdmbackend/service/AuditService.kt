@@ -15,6 +15,7 @@ class AuditService(
         private val subscribersRegistered = AtomicBoolean(false)
         const val ACTION_POLICY_DESIRED_CHANGED = "POLICY_DESIRED_CHANGED"
         const val ACTION_POLICY_REFRESH_ENQUEUED = "POLICY_REFRESH_ENQUEUED"
+        const val ACTION_COMMAND_EXPIRED = "COMMAND_EXPIRED"
     }
 
     fun registerEventSubscribers(bus: EventBus) {
@@ -65,6 +66,16 @@ class AuditService(
                         targetType = "COMMAND",
                         targetId = event.commandId.toString(),
                         payloadJson = """{"deviceId":"${event.deviceId}","type":"${event.type}","ttlSeconds":${event.ttlSeconds}}"""
+                    )
+                }
+
+                is CommandExpiredEvent -> {
+                    log(
+                        actorType = "SYSTEM",
+                        action = ACTION_COMMAND_EXPIRED,
+                        targetType = "COMMAND",
+                        targetId = event.commandId.toString(),
+                        payloadJson = """{"deviceId":"${event.deviceId}","type":"${event.type}","expiresAtEpochMillis":${event.expiresAtEpochMillis?.toString() ?: "null"}}"""
                     )
                 }
 

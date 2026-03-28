@@ -11,6 +11,7 @@ import org.jetbrains.exposed.sql.andWhere
 import org.jetbrains.exposed.sql.SqlExpressionBuilder.greaterEq
 import org.jetbrains.exposed.sql.SqlExpressionBuilder.lessEq
 import org.jetbrains.exposed.sql.count
+import org.jetbrains.exposed.sql.deleteWhere
 import org.jetbrains.exposed.sql.sum
 
 
@@ -60,6 +61,10 @@ class DeviceAppUsageRepository {
             this[DeviceAppUsageTable.durationMs] = item.durationMs
             this[DeviceAppUsageTable.createdAt] = now
         }.size
+    }
+
+    fun cleanupUsageOlderThan(cutoff: Instant): Int = transaction {
+        DeviceAppUsageTable.deleteWhere { DeviceAppUsageTable.endedAt lessEq cutoff }
     }
 
     fun summaryByDeviceId(

@@ -7,6 +7,7 @@ data class AppConfig(
     val seed: SeedConfig,
     val db: DbConfig,
     val cors: CorsConfig,
+    val telemetry: TelemetryConfig,
 ) {
     data class AuthConfig(
         val sessionTtlMinutes: Long,
@@ -33,6 +34,11 @@ data class AppConfig(
         val allowedHosts: List<String>,
     )
 
+    data class TelemetryConfig(
+        val eventRetentionDays: Long,
+        val usageRetentionDays: Long,
+    )
+
     companion object {
         fun from(cfg: ApplicationConfig): AppConfig {
             val root = cfg.config("mdm")
@@ -40,6 +46,7 @@ data class AppConfig(
             val auth = root.config("auth")
             val seed = root.config("seed")
             val db = root.config("db")
+            val telemetry = root.config("telemetry")
 
             // CORS: cho phép dashboard (dev) truy cập. Có thể chỉnh sau.
             val cors = if (root.propertyOrNull("cors.allowedHosts") != null) {
@@ -72,6 +79,10 @@ data class AppConfig(
                     password = db.property("password").getString(),
                 ),
                 cors = cors,
+                telemetry = TelemetryConfig(
+                    eventRetentionDays = telemetry.propertyOrNull("eventRetentionDays")?.getString()?.toLong() ?: 30L,
+                    usageRetentionDays = telemetry.propertyOrNull("usageRetentionDays")?.getString()?.toLong() ?: 30L,
+                ),
             )
         }
     }

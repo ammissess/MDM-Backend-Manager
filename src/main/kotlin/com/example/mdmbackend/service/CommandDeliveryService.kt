@@ -9,11 +9,13 @@ class CommandDeliveryService(
         deviceCode: String,
         sessionDeviceCode: String?,
         limit: Int,
+        ipAddress: String? = null,
     ): DevicePollCommandsResponse {
         return strategy.deliverPendingCommands(
             deviceCode = deviceCode,
             sessionDeviceCode = sessionDeviceCode,
-            limit = limit
+            limit = limit,
+            ipAddress = ipAddress,
         )
     }
 }

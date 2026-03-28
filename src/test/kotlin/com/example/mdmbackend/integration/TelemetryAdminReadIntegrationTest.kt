@@ -25,6 +25,187 @@ import kotlin.test.assertTrue
 class TelemetryAdminReadIntegrationTest {
 
     @Test
+    fun testExtendedInventorySnapshot_AdminDetailShouldExposeNewFields_NullableFirstSafe() = testApplication {
+        configureTelemetryTestApplication()
+        val client = createClient {
+            install(io.ktor.client.plugins.contentnegotiation.ContentNegotiation) { json() }
+        }
+        val evidenceFile = java.io.File("build/reports/day5-3-direct-evidence.log").apply {
+            parentFile.mkdirs()
+        }
+        fun evidence(line: String) {
+            evidenceFile.appendText(line + "\n")
+        }
+
+        val deviceCode = "DAY53_INV_001"
+        val deviceToken = TestAuthHelper.loginDevice(client, deviceCode)
+        val registerResp = client.post("/api/device/register") {
+            contentType(ContentType.Application.Json)
+            header("Authorization", "Bearer $deviceToken")
+            setBody("""{"deviceCode":"$deviceCode"}""")
+        }
+        assertEquals(HttpStatusCode.OK, registerResp.status)
+        val deviceId = TestJsonHelper.extractField(registerResp.bodyAsText(), "deviceId")
+
+        val adminToken = TestAuthHelper.loginAdmin(client)
+
+        // Nullable-first: detail must still be readable before Android sends extended inventory fields.
+        val detailBeforeResp = client.get("/api/admin/devices/$deviceId") {
+            header("Authorization", "Bearer $adminToken")
+        }
+        assertEquals(HttpStatusCode.OK, detailBeforeResp.status)
+        val detailBeforeBody = detailBeforeResp.bodyAsText()
+        println("DAY53_ADMIN_DETAIL_BEFORE_URL=/api/admin/devices/$deviceId")
+        println("DAY53_ADMIN_DETAIL_BEFORE=$detailBeforeBody")
+        evidence("DAY53_ADMIN_DETAIL_BEFORE_URL=/api/admin/devices/$deviceId")
+        evidence("DAY53_ADMIN_DETAIL_BEFORE=$detailBeforeBody")
+
+        val now = System.currentTimeMillis()
+        val stateResp = client.post("/api/device/state") {
+            contentType(ContentType.Application.Json)
+            header("Authorization", "Bearer $deviceToken")
+            setBody(
+                """
+                {
+                  "deviceCode":"$deviceCode",
+                  "reportedAtEpochMillis":$now,
+                  "agentVersion":"1.2.3",
+                  "agentBuildCode":123,
+                  "currentLauncherPackage":"com.example.launcher",
+                  "uptimeMs":456789,
+                  "abi":"arm64-v8a",
+                  "buildFingerprint":"google/panther/panther:14/UP1A/test:user/release-keys"
+                }
+                """.trimIndent()
+            )
+        }
+        assertEquals(HttpStatusCode.OK, stateResp.status)
+
+        val detailAfterResp = client.get("/api/admin/devices/$deviceId") {
+            header("Authorization", "Bearer $adminToken")
+        }
+        assertEquals(HttpStatusCode.OK, detailAfterResp.status)
+        val body = detailAfterResp.bodyAsText()
+        println("DAY53_ADMIN_DETAIL_AFTER_URL=/api/admin/devices/$deviceId")
+        println("DAY53_ADMIN_DETAIL_AFTER=$body")
+        evidence("DAY53_ADMIN_DETAIL_AFTER_URL=/api/admin/devices/$deviceId")
+        evidence("DAY53_ADMIN_DETAIL_AFTER=$body")
+        assertTrue(body.contains("agentVersion"))
+        assertTrue(body.contains("1.2.3"))
+        assertTrue(body.contains("agentBuildCode"))
+        assertTrue(body.contains("123"))
+        assertTrue(body.contains("currentLauncherPackage"))
+        assertTrue(body.contains("com.example.launcher"))
+        assertTrue(body.contains("uptimeMs"))
+        assertTrue(body.contains("456789"))
+        assertTrue(body.contains("abi"))
+        assertTrue(body.contains("arm64-v8a"))
+        assertTrue(body.contains("buildFingerprint"))
+        assertTrue(body.contains("google/panther/panther:14/UP1A/test:user/release-keys"))
+    }
+
+    @Test
+    fun testExtendedInventorySnapshot_AdminDetailShouldExposeInventoryAndPollAckTogether() = testApplication {
+        configureTelemetryTestApplication()
+        val client = createClient {
+            install(io.ktor.client.plugins.contentnegotiation.ContentNegotiation) { json() }
+        }
+        val evidenceFile = java.io.File("build/reports/day5-3-direct-evidence.log").apply {
+            parentFile.mkdirs()
+        }
+        fun evidence(line: String) {
+            evidenceFile.appendText(line + "\n")
+        }
+
+        val deviceCode = "DAY53_INV_FULL_001"
+        val deviceToken = TestAuthHelper.loginDevice(client, deviceCode)
+        val registerResp = client.post("/api/device/register") {
+            contentType(ContentType.Application.Json)
+            header("Authorization", "Bearer $deviceToken")
+            setBody("""{"deviceCode":"$deviceCode"}""")
+        }
+        assertEquals(HttpStatusCode.OK, registerResp.status)
+        val deviceId = TestJsonHelper.extractField(registerResp.bodyAsText(), "deviceId")
+
+        val adminToken = TestAuthHelper.loginAdmin(client)
+
+        val now = System.currentTimeMillis()
+        val stateResp = client.post("/api/device/state") {
+            contentType(ContentType.Application.Json)
+            header("Authorization", "Bearer $deviceToken")
+            setBody(
+                """
+                {
+                  "deviceCode":"$deviceCode",
+                  "reportedAtEpochMillis":$now,
+                  "agentVersion":"1.2.3",
+                  "agentBuildCode":123,
+                  "currentLauncherPackage":"com.example.launcher",
+                  "uptimeMs":456789,
+                  "abi":"arm64-v8a",
+                  "buildFingerprint":"google/panther/panther:14/UP1A/test:user/release-keys"
+                }
+                """.trimIndent()
+            )
+        }
+        assertEquals(HttpStatusCode.OK, stateResp.status)
+
+        val createCmdResp = client.post("/api/admin/devices/$deviceId/commands") {
+            contentType(ContentType.Application.Json)
+            header("Authorization", "Bearer $adminToken")
+            setBody("""{"type":"lock_screen","payload":"{}","ttlSeconds":600}""")
+        }
+        assertEquals(HttpStatusCode.Created, createCmdResp.status)
+        val commandId = TestJsonHelper.extractField(createCmdResp.bodyAsText(), "id")
+
+        val pollResp = client.post("/api/device/poll") {
+            contentType(ContentType.Application.Json)
+            header("Authorization", "Bearer $deviceToken")
+            header("X-Forwarded-For", "203.0.113.9")
+            setBody("""{"deviceCode":"$deviceCode","limit":1}""")
+        }
+        assertEquals(HttpStatusCode.OK, pollResp.status)
+        val leaseToken = TestJsonHelper.extractField(pollResp.bodyAsText(), "leaseToken")
+
+        val ackResp = client.post("/api/device/ack") {
+            contentType(ContentType.Application.Json)
+            header("Authorization", "Bearer $deviceToken")
+            header("X-Forwarded-For", "198.51.100.10")
+            setBody(
+                """
+                {
+                  "deviceCode":"$deviceCode",
+                  "commandId":"$commandId",
+                  "leaseToken":"$leaseToken",
+                  "result":"SUCCESS"
+                }
+                """.trimIndent()
+            )
+        }
+        assertEquals(HttpStatusCode.OK, ackResp.status)
+
+        val detailResp = client.get("/api/admin/devices/$deviceId") {
+            header("Authorization", "Bearer $adminToken")
+        }
+        assertEquals(HttpStatusCode.OK, detailResp.status)
+        val detailBody = detailResp.bodyAsText()
+        println("DAY53_ADMIN_DETAIL_FULL_URL=/api/admin/devices/$deviceId")
+        println("DAY53_ADMIN_DETAIL_FULL=$detailBody")
+        evidence("DAY53_ADMIN_DETAIL_FULL_URL=/api/admin/devices/$deviceId")
+        evidence("DAY53_ADMIN_DETAIL_FULL=$detailBody")
+
+        assertTrue(detailBody.contains("agentVersion"))
+        assertTrue(detailBody.contains("agentBuildCode"))
+        assertTrue(detailBody.contains("ipAddress"))
+        assertTrue(detailBody.contains("currentLauncherPackage"))
+        assertTrue(detailBody.contains("uptimeMs"))
+        assertTrue(detailBody.contains("abi"))
+        assertTrue(detailBody.contains("buildFingerprint"))
+        assertTrue(detailBody.contains("lastPollAtEpochMillis"))
+        assertTrue(detailBody.contains("lastCommandAckAtEpochMillis"))
+    }
+
+    @Test
     fun testStateSnapshotAndPolicyState_AdminCanReadDetail() = testApplication {
         configureTelemetryTestApplication()
         val client = createClient {
@@ -766,6 +947,74 @@ class TelemetryAdminReadIntegrationTest {
         val (afterPolicyHash, afterPolicyVersion) = readDesired(deviceId)
         assertEquals(baselineHash, afterPolicyHash)
         assertEquals(baselineVersion, afterPolicyVersion)
+    }
+
+    @Test
+    fun testTelemetrySummaryEndpoint_ShouldReturnEventAggregatesAndPolicyFailedCounts() = testApplication {
+        configureTelemetryTestApplication()
+        val client = createClient {
+            install(io.ktor.client.plugins.contentnegotiation.ContentNegotiation) { json() }
+        }
+
+        val deviceCode = "TELEMETRY_SUMMARY_DEV_001"
+        val deviceToken = TestAuthHelper.loginDevice(client, deviceCode)
+        val registerResp = client.post("/api/device/register") {
+            contentType(ContentType.Application.Json)
+            header("Authorization", "Bearer $deviceToken")
+            setBody("""{"deviceCode":"$deviceCode"}""")
+        }
+        assertEquals(HttpStatusCode.OK, registerResp.status)
+        val deviceId = TestJsonHelper.extractField(registerResp.bodyAsText(), "deviceId")
+
+        client.post("/api/device/$deviceCode/events") {
+            contentType(ContentType.Application.Json)
+            header("Authorization", "Bearer $deviceToken")
+            setBody("""{"type":"policy_apply","category":"POLICY","severity":"ERROR","payload":"{}","errorCode":"POLICY_APPLY_FAILED"}""")
+        }
+        client.post("/api/device/$deviceCode/events") {
+            contentType(ContentType.Application.Json)
+            header("Authorization", "Bearer $deviceToken")
+            setBody("""{"type":"heartbeat","category":"SYSTEM","severity":"INFO","payload":"{}"}""")
+        }
+
+        val now = System.currentTimeMillis()
+        val failedPolicyResp = client.post("/api/device/policy-state") {
+            contentType(ContentType.Application.Json)
+            header("Authorization", "Bearer $deviceToken")
+            setBody(
+                """
+                {
+                  "deviceCode":"$deviceCode",
+                  "policyApplyStatus":"FAILED",
+                  "policyApplyErrorCode":"POLICY_APPLY_FAILED",
+                  "policyApplyError":"apply failed",
+                  "policyAppliedAtEpochMillis":$now
+                }
+                """.trimIndent()
+            )
+        }
+        assertEquals(HttpStatusCode.OK, failedPolicyResp.status)
+
+        val adminToken = TestAuthHelper.loginAdmin(client)
+        val summaryResp = client.get("/api/admin/devices/$deviceId/telemetry/summary") {
+            header("Authorization", "Bearer $adminToken")
+        }
+        assertEquals(HttpStatusCode.OK, summaryResp.status)
+
+        val body = summaryResp.bodyAsText()
+        println("DAY52_TELEMETRY_SUMMARY_URL=/api/admin/devices/$deviceId/telemetry/summary")
+        println("DAY52_TELEMETRY_SUMMARY_RESPONSE=$body")
+        assertTrue(body.contains("eventCountByType"))
+        assertTrue(body.contains("eventCountByCategory"))
+        assertTrue(body.contains("eventCountBySeverity"))
+        assertTrue(body.contains("policy_apply"))
+        assertTrue(body.contains("POLICY"))
+        assertTrue(body.contains("ERROR"))
+
+        val failed24h = TestJsonHelper.extractNumberField(body, "policyApplyFailed24h") ?: -1
+        val failed7d = TestJsonHelper.extractNumberField(body, "policyApplyFailed7d") ?: -1
+        assertEquals(1, failed24h)
+        assertEquals(1, failed7d)
     }
 }
 

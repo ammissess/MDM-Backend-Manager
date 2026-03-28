@@ -200,6 +200,268 @@ class CommandIntegrationTest {
     }
 
     @Test
+    fun testPollAndAck_ShouldUpdateInventoryTimestampsAndIpAddress() = testApplication {
+        configureCommandTestApplication()
+        val client = createClient {
+            install(io.ktor.client.plugins.contentnegotiation.ContentNegotiation) { json() }
+        }
+        val evidenceFile = java.io.File("build/reports/day5-3-direct-evidence.log").apply {
+            parentFile.mkdirs()
+        }
+        fun evidence(line: String) {
+            evidenceFile.appendText(line + "\n")
+        }
+
+        val deviceCode = "DAY53_CMD_INV_001"
+        val deviceToken = TestAuthHelper.loginDevice(client, deviceCode)
+        val registerResp = client.post("/api/device/register") {
+            contentType(ContentType.Application.Json)
+            header("Authorization", "Bearer $deviceToken")
+            setBody("""{"deviceCode":"$deviceCode"}""")
+        }
+        assertEquals(HttpStatusCode.OK, registerResp.status)
+        val deviceId = TestJsonHelper.extractField(registerResp.bodyAsText(), "deviceId")
+
+        val adminToken = TestAuthHelper.loginAdmin(client)
+        val createCmdResp = client.post("/api/admin/devices/$deviceId/commands") {
+            contentType(ContentType.Application.Json)
+            header("Authorization", "Bearer $adminToken")
+            setBody("""{"type":"lock_screen","payload":"{}","ttlSeconds":600}""")
+        }
+        assertEquals(HttpStatusCode.Created, createCmdResp.status)
+        val commandId = TestJsonHelper.extractField(createCmdResp.bodyAsText(), "id")
+
+        val detailBeforePollResp = client.get("/api/admin/devices/$deviceId") {
+            header("Authorization", "Bearer $adminToken")
+        }
+        assertEquals(HttpStatusCode.OK, detailBeforePollResp.status)
+        val detailBeforePollBody = detailBeforePollResp.bodyAsText()
+        val lastPollBefore = TestJsonHelper.extractNumberField(detailBeforePollBody, "lastPollAtEpochMillis")
+        println("DAY53_DETAIL_BEFORE_POLL_URL=/api/admin/devices/$deviceId")
+        println("DAY53_DETAIL_BEFORE_POLL=$detailBeforePollBody")
+        println("DAY53_LAST_POLL_BEFORE=$lastPollBefore")
+        evidence("DAY53_DETAIL_BEFORE_POLL_URL=/api/admin/devices/$deviceId")
+        evidence("DAY53_DETAIL_BEFORE_POLL=$detailBeforePollBody")
+        evidence("DAY53_LAST_POLL_BEFORE=$lastPollBefore")
+
+        val pollResp = client.post("/api/device/poll") {
+            contentType(ContentType.Application.Json)
+            header("Authorization", "Bearer $deviceToken")
+            header("X-Forwarded-For", "203.0.113.9")
+            setBody("""{"deviceCode":"$deviceCode","limit":1}""")
+        }
+        assertEquals(HttpStatusCode.OK, pollResp.status)
+        val leaseToken = TestJsonHelper.extractField(pollResp.bodyAsText(), "leaseToken")
+
+        val detailAfterPollResp = client.get("/api/admin/devices/$deviceId") {
+            header("Authorization", "Bearer $adminToken")
+        }
+        assertEquals(HttpStatusCode.OK, detailAfterPollResp.status)
+        val detailAfterPollBody = detailAfterPollResp.bodyAsText()
+        val lastPollAfter = TestJsonHelper.extractNumberField(detailAfterPollBody, "lastPollAtEpochMillis")
+        println("DAY53_DETAIL_AFTER_POLL_URL=/api/admin/devices/$deviceId")
+        println("DAY53_DETAIL_AFTER_POLL=$detailAfterPollBody")
+        println("DAY53_LAST_POLL_AFTER=$lastPollAfter")
+        evidence("DAY53_DETAIL_AFTER_POLL_URL=/api/admin/devices/$deviceId")
+        evidence("DAY53_DETAIL_AFTER_POLL=$detailAfterPollBody")
+        evidence("DAY53_LAST_POLL_AFTER=$lastPollAfter")
+
+        val detailBeforeAckResp = client.get("/api/admin/devices/$deviceId") {
+            header("Authorization", "Bearer $adminToken")
+        }
+        assertEquals(HttpStatusCode.OK, detailBeforeAckResp.status)
+        val detailBeforeAckBody = detailBeforeAckResp.bodyAsText()
+        val lastAckBefore = TestJsonHelper.extractNumberField(detailBeforeAckBody, "lastCommandAckAtEpochMillis")
+        println("DAY53_DETAIL_BEFORE_ACK_URL=/api/admin/devices/$deviceId")
+        println("DAY53_DETAIL_BEFORE_ACK=$detailBeforeAckBody")
+        println("DAY53_LAST_ACK_BEFORE=$lastAckBefore")
+        evidence("DAY53_DETAIL_BEFORE_ACK_URL=/api/admin/devices/$deviceId")
+        evidence("DAY53_DETAIL_BEFORE_ACK=$detailBeforeAckBody")
+        evidence("DAY53_LAST_ACK_BEFORE=$lastAckBefore")
+
+        val ackResp = client.post("/api/device/ack") {
+            contentType(ContentType.Application.Json)
+            header("Authorization", "Bearer $deviceToken")
+            header("X-Forwarded-For", "198.51.100.10")
+            setBody(
+                """
+                {
+                  "deviceCode":"$deviceCode",
+                  "commandId":"$commandId",
+                  "leaseToken":"$leaseToken",
+                  "result":"SUCCESS"
+                }
+                """.trimIndent()
+            )
+        }
+        assertEquals(HttpStatusCode.OK, ackResp.status)
+
+        val detailResp = client.get("/api/admin/devices/$deviceId") {
+            header("Authorization", "Bearer $adminToken")
+        }
+        assertEquals(HttpStatusCode.OK, detailResp.status)
+        val detailBody = detailResp.bodyAsText()
+        val lastAckAfter = TestJsonHelper.extractNumberField(detailBody, "lastCommandAckAtEpochMillis")
+        println("DAY53_DETAIL_AFTER_ACK_URL=/api/admin/devices/$deviceId")
+        println("DAY53_DETAIL_AFTER_ACK=$detailBody")
+        println("DAY53_LAST_ACK_AFTER=$lastAckAfter")
+        evidence("DAY53_DETAIL_AFTER_ACK_URL=/api/admin/devices/$deviceId")
+        evidence("DAY53_DETAIL_AFTER_ACK=$detailBody")
+        evidence("DAY53_LAST_ACK_AFTER=$lastAckAfter")
+        assertTrue("\"lastPollAtEpochMillis\"\\s*:\\s*\\d+".toRegex().containsMatchIn(detailBody))
+        assertTrue("\"lastCommandAckAtEpochMillis\"\\s*:\\s*\\d+".toRegex().containsMatchIn(detailBody))
+        assertTrue(detailBody.contains("\"ipAddress\""))
+        assertTrue(detailBody.contains("198.51.100.10"))
+    }
+
+    @Test
+    fun testExpiredCommand_ShouldNotBeLeased_AndShouldAppearAsExpiredInAdminList() = testApplication {
+        configureCommandTestApplication()
+        val client = createClient {
+            install(io.ktor.client.plugins.contentnegotiation.ContentNegotiation) { json() }
+        }
+
+        val deviceCode = "TEST_CMD_EXPIRED_001"
+        val deviceToken = TestAuthHelper.loginDevice(client, deviceCode)
+        val registerResp = client.post("/api/device/register") {
+            contentType(ContentType.Application.Json)
+            header("Authorization", "Bearer $deviceToken")
+            setBody("""{"deviceCode":"$deviceCode"}""")
+        }
+        assertEquals(HttpStatusCode.OK, registerResp.status)
+        val deviceId = TestJsonHelper.extractField(registerResp.bodyAsText(), "deviceId")
+
+        val adminToken = TestAuthHelper.loginAdmin(client)
+        val createResp = client.post("/api/admin/devices/$deviceId/commands") {
+            contentType(ContentType.Application.Json)
+            header("Authorization", "Bearer $adminToken")
+            setBody("""{"type":"lock_screen","payload":"{}","ttlSeconds":1}""")
+        }
+        assertEquals(HttpStatusCode.Created, createResp.status)
+        val commandId = TestJsonHelper.extractField(createResp.bodyAsText(), "id")
+
+        Thread.sleep(1500)
+
+        val pollResp = client.post("/api/device/poll") {
+            contentType(ContentType.Application.Json)
+            header("Authorization", "Bearer $deviceToken")
+            setBody("""{"deviceCode":"$deviceCode","limit":5}""")
+        }
+        assertEquals(HttpStatusCode.OK, pollResp.status)
+        val pollBody = pollResp.bodyAsText()
+        assertTrue(!pollBody.contains(commandId), "Expired command must not be leased")
+
+        val listExpiredResp = client.get("/api/admin/devices/$deviceId/commands?status=EXPIRED&limit=50&offset=0") {
+            header("Authorization", "Bearer $adminToken")
+        }
+        assertEquals(HttpStatusCode.OK, listExpiredResp.status)
+        val expiredBody = listExpiredResp.bodyAsText()
+        assertTrue(expiredBody.contains(commandId))
+        assertTrue("\\\"status\\\"\\s*:\\s*\\\"EXPIRED\\\"".toRegex().containsMatchIn(expiredBody))
+    }
+
+    @Test
+    fun testAckAfterExpiry_ShouldReturnConflictWithStableErrorCode() = testApplication {
+        configureCommandTestApplication()
+        val client = createClient {
+            install(io.ktor.client.plugins.contentnegotiation.ContentNegotiation) { json() }
+        }
+
+        val deviceCode = "TEST_CMD_EXPIRED_ACK_001"
+        val deviceToken = TestAuthHelper.loginDevice(client, deviceCode)
+        val registerResp = client.post("/api/device/register") {
+            contentType(ContentType.Application.Json)
+            header("Authorization", "Bearer $deviceToken")
+            setBody("""{"deviceCode":"$deviceCode"}""")
+        }
+        assertEquals(HttpStatusCode.OK, registerResp.status)
+        val deviceId = TestJsonHelper.extractField(registerResp.bodyAsText(), "deviceId")
+
+        val adminToken = TestAuthHelper.loginAdmin(client)
+        val createResp = client.post("/api/admin/devices/$deviceId/commands") {
+            contentType(ContentType.Application.Json)
+            header("Authorization", "Bearer $adminToken")
+            setBody("""{"type":"lock_screen","payload":"{}","ttlSeconds":1}""")
+        }
+        assertEquals(HttpStatusCode.Created, createResp.status)
+        val commandId = TestJsonHelper.extractField(createResp.bodyAsText(), "id")
+
+        val pollResp = client.post("/api/device/poll") {
+            contentType(ContentType.Application.Json)
+            header("Authorization", "Bearer $deviceToken")
+            setBody("""{"deviceCode":"$deviceCode","limit":1}""")
+        }
+        assertEquals(HttpStatusCode.OK, pollResp.status)
+        val leaseToken = TestJsonHelper.extractField(pollResp.bodyAsText(), "leaseToken")
+
+        Thread.sleep(1500)
+
+        val ackResp = client.post("/api/device/ack") {
+            contentType(ContentType.Application.Json)
+            header("Authorization", "Bearer $deviceToken")
+            setBody(
+                """
+                {
+                  "deviceCode":"$deviceCode",
+                  "commandId":"$commandId",
+                  "leaseToken":"$leaseToken",
+                  "result":"SUCCESS"
+                }
+                """.trimIndent()
+            )
+        }
+        assertEquals(HttpStatusCode.Conflict, ackResp.status)
+        val ackBody = ackResp.bodyAsText()
+        assertTrue(ackBody.contains("COMMAND_EXPIRED"))
+        assertTrue(ackBody.contains("expired", ignoreCase = true))
+    }
+
+    @Test
+    fun testCancelAfterExpiry_ShouldNotChangeExpiredToCancelled() = testApplication {
+        configureCommandTestApplication()
+        val client = createClient {
+            install(io.ktor.client.plugins.contentnegotiation.ContentNegotiation) { json() }
+        }
+
+        val deviceCode = "TEST_CMD_EXPIRED_CANCEL_001"
+        val deviceToken = TestAuthHelper.loginDevice(client, deviceCode)
+        val registerResp = client.post("/api/device/register") {
+            contentType(ContentType.Application.Json)
+            header("Authorization", "Bearer $deviceToken")
+            setBody("""{"deviceCode":"$deviceCode"}""")
+        }
+        assertEquals(HttpStatusCode.OK, registerResp.status)
+        val deviceId = TestJsonHelper.extractField(registerResp.bodyAsText(), "deviceId")
+
+        val adminToken = TestAuthHelper.loginAdmin(client)
+        val createResp = client.post("/api/admin/devices/$deviceId/commands") {
+            contentType(ContentType.Application.Json)
+            header("Authorization", "Bearer $adminToken")
+            setBody("""{"type":"lock_screen","payload":"{}","ttlSeconds":1}""")
+        }
+        assertEquals(HttpStatusCode.Created, createResp.status)
+        val commandId = TestJsonHelper.extractField(createResp.bodyAsText(), "id")
+
+        Thread.sleep(1500)
+
+        val cancelResp = client.post("/api/admin/devices/$deviceId/commands/$commandId/cancel") {
+            contentType(ContentType.Application.Json)
+            header("Authorization", "Bearer $adminToken")
+            setBody("""{"reason":"late_cancel"}""")
+        }
+        assertEquals(HttpStatusCode.Conflict, cancelResp.status)
+        assertTrue(cancelResp.bodyAsText().contains("COMMAND_EXPIRED"))
+
+        val listExpiredResp = client.get("/api/admin/devices/$deviceId/commands?status=EXPIRED&limit=50&offset=0") {
+            header("Authorization", "Bearer $adminToken")
+        }
+        assertEquals(HttpStatusCode.OK, listExpiredResp.status)
+        val expiredBody = listExpiredResp.bodyAsText()
+        assertTrue(expiredBody.contains(commandId))
+        assertTrue("\\\"status\\\"\\s*:\\s*\\\"EXPIRED\\\"".toRegex().containsMatchIn(expiredBody))
+    }
+
+    @Test
     fun testLinkAndProfileUpdate_ShouldEnqueueRefreshConfigCommands() = testApplication {
         configureCommandTestApplication()
         val client = createClient {

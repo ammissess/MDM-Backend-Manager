@@ -445,6 +445,52 @@ class AuditIntegrationTest {
     }
 
     @Test
+    fun testCommandExpired_ShouldWriteSingleAuditRecordOnFirstTransition() = testApplication {
+        configureAuditTestApplication()
+        val client = createClient {
+            install(io.ktor.client.plugins.contentnegotiation.ContentNegotiation) { json() }
+        }
+
+        val deviceCode = "AUDIT_CMD_EXPIRED_001"
+        val deviceToken = TestAuthHelper.loginDevice(client, deviceCode)
+        val registerResp = client.post("/api/device/register") {
+            contentType(ContentType.Application.Json)
+            header("Authorization", "Bearer $deviceToken")
+            setBody("""{"deviceCode":"$deviceCode"}""")
+        }
+        assertEquals(HttpStatusCode.OK, registerResp.status)
+        val deviceId = TestJsonHelper.extractField(registerResp.bodyAsText(), "deviceId")
+
+        val adminToken = TestAuthHelper.loginAdmin(client)
+        val createResp = client.post("/api/admin/devices/$deviceId/commands") {
+            contentType(ContentType.Application.Json)
+            header("Authorization", "Bearer $adminToken")
+            setBody("""{"type":"lock_screen","payload":"{}","ttlSeconds":1}""")
+        }
+        assertEquals(HttpStatusCode.Created, createResp.status)
+        val commandId = TestJsonHelper.extractField(createResp.bodyAsText(), "id")
+
+        Thread.sleep(1500)
+
+        // Trigger lazy-expire twice; audit must still contain a single COMMAND_EXPIRED for this command.
+        repeat(2) {
+            val listResp = client.get("/api/admin/devices/$deviceId/commands?limit=20&offset=0") {
+                header("Authorization", "Bearer $adminToken")
+            }
+            assertEquals(HttpStatusCode.OK, listResp.status)
+        }
+
+        val auditResp = client.get("/api/admin/audit?action=COMMAND_EXPIRED&targetType=COMMAND&targetId=$commandId&limit=50&offset=0") {
+            header("Authorization", "Bearer $adminToken")
+        }
+        assertEquals(HttpStatusCode.OK, auditResp.status)
+        val body = auditResp.bodyAsText()
+        val count = "\\\"action\\\"\\s*:\\s*\\\"COMMAND_EXPIRED\\\"".toRegex().findAll(body).count()
+        assertEquals(1, count)
+        assertTrue(body.contains(commandId))
+    }
+
+    @Test
     fun testLinkUnlinkDesiredLifecycle_ShouldRecomputeAuditAndEnqueueRefresh() = testApplication {
         configureAuditTestApplication()
         val client = createClient {
@@ -525,6 +571,56 @@ class AuditIntegrationTest {
         assertEquals(refreshBeforeLink + 2, refreshCount())
         assertEquals(desiredAuditBeforeLink + 2, actionCount("POLICY_DESIRED_CHANGED"))
         assertEquals(refreshAuditBeforeLink + 2, actionCount("POLICY_REFRESH_ENQUEUED"))
+    }
+
+    @Test
+    fun testTelemetrySummary_ShouldCountPolicyApplyFailedFromAuditLifecycle() = testApplication {
+        configureAuditTestApplication()
+        val client = createClient {
+            install(io.ktor.client.plugins.contentnegotiation.ContentNegotiation) { json() }
+        }
+
+        val deviceCode = "AUDIT_SUMMARY_DEV_001"
+        val deviceToken = TestAuthHelper.loginDevice(client, deviceCode)
+        val registerResp = client.post("/api/device/register") {
+            contentType(ContentType.Application.Json)
+            header("Authorization", "Bearer $deviceToken")
+            setBody("""{"deviceCode":"$deviceCode"}""")
+        }
+        assertEquals(HttpStatusCode.OK, registerResp.status)
+        val deviceId = TestJsonHelper.extractField(registerResp.bodyAsText(), "deviceId")
+
+        val now = System.currentTimeMillis()
+        repeat(2) {
+            val failedResp = client.post("/api/device/policy-state") {
+                contentType(ContentType.Application.Json)
+                header("Authorization", "Bearer $deviceToken")
+                setBody(
+                    """
+                    {
+                      "deviceCode":"$deviceCode",
+                      "policyApplyStatus":"FAILED",
+                      "policyApplyErrorCode":"POLICY_APPLY_FAILED",
+                      "policyApplyError":"apply failed $it",
+                      "policyAppliedAtEpochMillis":$now
+                    }
+                    """.trimIndent()
+                )
+            }
+            assertEquals(HttpStatusCode.OK, failedResp.status)
+        }
+
+        val adminToken = TestAuthHelper.loginAdmin(client)
+        val summaryResp = client.get("/api/admin/devices/$deviceId/telemetry/summary") {
+            header("Authorization", "Bearer $adminToken")
+        }
+        assertEquals(HttpStatusCode.OK, summaryResp.status)
+        val body = summaryResp.bodyAsText()
+
+        val failed24h = TestJsonHelper.extractNumberField(body, "policyApplyFailed24h") ?: -1
+        val failed7d = TestJsonHelper.extractNumberField(body, "policyApplyFailed7d") ?: -1
+        assertEquals(2, failed24h)
+        assertEquals(2, failed7d)
     }
 }
 

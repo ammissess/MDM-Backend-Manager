@@ -43,6 +43,14 @@ data class CommandCreatedEvent(
     override val occurredAt: Instant = Instant.now(),
 ) : DomainEvent
 
+data class CommandExpiredEvent(
+    val commandId: UUID,
+    val deviceId: UUID,
+    val type: String,
+    val expiresAtEpochMillis: Long?,
+    override val occurredAt: Instant = Instant.now(),
+) : DomainEvent
+
 data class TelemetryReceivedEvent(
     val telemetryType: String, // location|usage|usage_batch|event
     val deviceCode: String,

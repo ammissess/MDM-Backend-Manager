@@ -29,8 +29,10 @@ import com.example.mdmbackend.service.DeviceCommandService
 import com.example.mdmbackend.service.DeviceService
 import com.example.mdmbackend.service.PollingDeliveryStrategy
 import io.ktor.http.HttpStatusCode
+import io.ktor.server.application.ApplicationCall
 import io.ktor.server.auth.authenticate
 import io.ktor.server.auth.principal
+import io.ktor.server.plugins.origin
 import io.ktor.server.request.receive
 import io.ktor.server.response.respond
 import io.ktor.server.routing.Route
@@ -69,7 +71,8 @@ fun Route.deviceRoutes(cfg: AppConfig) {
                     deliveryService.deliverPendingCommands(
                         deviceCode = req.deviceCode,
                         sessionDeviceCode = principal.deviceCode,
-                        limit = req.limit
+                        limit = req.limit,
+                        ipAddress = call.bestEffortClientIpAddress(),
                     )
                 }.getOrElse { e ->
                     when (e) {
@@ -104,7 +107,11 @@ fun Route.deviceRoutes(cfg: AppConfig) {
                 }
 
                 val resp: DeviceAckCommandResponse = runCatching {
-                    commandService.deviceAck(req = req, sessionDeviceCode = principal.deviceCode)
+                    commandService.deviceAck(
+                        req = req,
+                        sessionDeviceCode = principal.deviceCode,
+                        ipAddress = call.bestEffortClientIpAddress(),
+                    )
                 }.getOrElse { e ->
                     when (e) {
                         is HttpException -> throw e
@@ -357,4 +364,17 @@ private fun requireDeviceCodeMatchIfDevice(principal: UserPrincipal, requestedDe
             "DEVICE_CODE_MISMATCH"
         )
     }
+}
+
+private fun ApplicationCall.bestEffortClientIpAddress(): String? {
+    val forwardedFor = request.headers["X-Forwarded-For"]
+        ?.split(',')
+        ?.asSequence()
+        ?.map { it.trim() }
+        ?.firstOrNull { it.isNotEmpty() && !it.equals("unknown", ignoreCase = true) }
+
+    return forwardedFor
+        ?: request.origin.remoteHost
+            ?.trim()
+            ?.takeIf { it.isNotEmpty() && !it.equals("unknown", ignoreCase = true) }
 }
