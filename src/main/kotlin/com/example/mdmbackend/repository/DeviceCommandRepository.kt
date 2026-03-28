@@ -1,6 +1,9 @@
 package com.example.mdmbackend.repository
 
 import com.example.mdmbackend.model.*
+import com.example.mdmbackend.service.CommandExpiredEvent
+import com.example.mdmbackend.service.EventBus
+import com.example.mdmbackend.service.EventBusHolder
 import org.jetbrains.exposed.dao.id.EntityID
 import org.jetbrains.exposed.sql.*
 import org.jetbrains.exposed.sql.SqlExpressionBuilder.eq
@@ -31,7 +34,18 @@ data class CommandRecord(
     val output: String?,
 )
 
-class DeviceCommandRepository {
+class DeviceCommandRepository(
+    private val eventBus: EventBus = EventBusHolder.bus,
+) {
+
+    private data class ExpiredCandidate(
+        val id: UUID,
+        val deviceId: UUID,
+        val type: String,
+        val expiresAt: Instant?,
+    )
+
+    private val expirableStatuses = listOf(CommandStatus.PENDING, CommandStatus.SENT)
 
     fun create(
         deviceId: UUID,
@@ -57,15 +71,20 @@ class DeviceCommandRepository {
         getById(id)!!
     }
 
-    fun getById(id: UUID): CommandRecord? = transaction {
+    fun getById(id: UUID): CommandRecord? {
+        markExpiredAndPublish(commandId = id)
+        return transaction {
         DeviceCommandsTable.selectAll()
             .where { DeviceCommandsTable.id eq EntityID(id, DeviceCommandsTable) }
             .limit(1)
             .map { mapRow(it) }
             .firstOrNull()
+        }
     }
 
-    fun leaseNext(deviceId: UUID, leaseSeconds: Long, now: Instant = Instant.now()): CommandRecord? = transaction {
+    fun leaseNext(deviceId: UUID, leaseSeconds: Long, now: Instant = Instant.now()): CommandRecord? {
+        markExpiredAndPublish(deviceId = deviceId, now = now)
+        return transaction {
         val row = DeviceCommandsTable
             .selectAll()
             .where {
@@ -97,6 +116,7 @@ class DeviceCommandRepository {
             it[DeviceCommandsTable.leaseExpiresAt] = leaseExpiresAt
         }
         getById(id)!!
+        }
     }
 
     fun ack(
@@ -108,12 +128,14 @@ class DeviceCommandRepository {
         errorCode: String?,
         output: String?,
         now: Instant = Instant.now()
-    ): CommandRecord? = transaction {
+    ): CommandRecord? {
+        markExpiredAndPublish(deviceId = deviceId, commandId = commandId, now = now)
+        return transaction {
         val current = getById(commandId) ?: return@transaction null
         if (current.deviceId != deviceId) return@transaction null
 
         if (current.status == CommandStatus.SUCCESS || current.status == CommandStatus.FAILED) return@transaction current
-        if (current.status == CommandStatus.CANCELLED) return@transaction null
+        if (current.status == CommandStatus.CANCELLED || current.status == CommandStatus.EXPIRED) return@transaction null
         if (current.expiresAt != null && !current.expiresAt.isAfter(now)) return@transaction null
 
         if (current.status != CommandStatus.SENT || current.leaseToken != leaseToken) return@transaction null
@@ -126,6 +148,7 @@ class DeviceCommandRepository {
             it[DeviceCommandsTable.output] = output
         }
         getById(commandId)!!
+        }
     }
 
     fun cancel(
@@ -135,11 +158,18 @@ class DeviceCommandRepository {
         reason: String,
         errorCode: String?,
         now: Instant = Instant.now(),
-    ): CommandRecord? = transaction {
+    ): CommandRecord? {
+        markExpiredAndPublish(deviceId = deviceId, commandId = commandId, now = now)
+        return transaction {
         val current = getById(commandId) ?: return@transaction null
         if (current.deviceId != deviceId) return@transaction null
 
-        if (current.status == CommandStatus.SUCCESS || current.status == CommandStatus.FAILED || current.status == CommandStatus.CANCELLED) {
+        if (
+            current.status == CommandStatus.SUCCESS ||
+            current.status == CommandStatus.FAILED ||
+            current.status == CommandStatus.CANCELLED ||
+            current.status == CommandStatus.EXPIRED
+        ) {
             return@transaction null
         }
 
@@ -152,8 +182,12 @@ class DeviceCommandRepository {
         }
 
         getById(commandId)!!
+        }
     }
-    fun list(deviceId: UUID, status: CommandStatus?, limit: Int, offset: Long): Pair<List<CommandRecord>, Long> = transaction {
+
+    fun list(deviceId: UUID, status: CommandStatus?, limit: Int, offset: Long): Pair<List<CommandRecord>, Long> {
+        markExpiredAndPublish(deviceId = deviceId)
+        return transaction {
         val base = DeviceCommandsTable.selectAll()
             .where { DeviceCommandsTable.deviceId eq EntityID(deviceId, DevicesTable) }
             .let { if (status != null) it.andWhere { DeviceCommandsTable.status eq status } else it }
@@ -165,6 +199,65 @@ class DeviceCommandRepository {
             .map { mapRow(it) }
 
         items to total
+        }
+    }
+
+    private fun markExpiredAndPublish(
+        deviceId: UUID? = null,
+        commandId: UUID? = null,
+        now: Instant = Instant.now(),
+    ) {
+        val expired = transaction {
+            val candidates = DeviceCommandsTable.selectAll()
+                .where {
+                    (DeviceCommandsTable.status inList expirableStatuses) and
+                        DeviceCommandsTable.expiresAt.isNotNull() and
+                        (DeviceCommandsTable.expiresAt lessEq now)
+                }
+                .let { q ->
+                    when {
+                        commandId != null -> q.andWhere { DeviceCommandsTable.id eq EntityID(commandId, DeviceCommandsTable) }
+                        deviceId != null -> q.andWhere { DeviceCommandsTable.deviceId eq EntityID(deviceId, DevicesTable) }
+                        else -> q
+                    }
+                }
+                .map {
+                    ExpiredCandidate(
+                        id = it[DeviceCommandsTable.id].value,
+                        deviceId = it[DeviceCommandsTable.deviceId].value,
+                        type = it[DeviceCommandsTable.type],
+                        expiresAt = it[DeviceCommandsTable.expiresAt],
+                    )
+                }
+
+            val transitioned = mutableListOf<ExpiredCandidate>()
+            candidates.forEach { candidate ->
+                val affected = DeviceCommandsTable.update({
+                    (DeviceCommandsTable.id eq EntityID(candidate.id, DeviceCommandsTable)) and
+                        (DeviceCommandsTable.status inList expirableStatuses) and
+                        DeviceCommandsTable.expiresAt.isNotNull() and
+                        (DeviceCommandsTable.expiresAt lessEq now)
+                }) {
+                    it[status] = CommandStatus.EXPIRED
+                }
+                if (affected > 0) {
+                    transitioned += candidate
+                }
+            }
+
+            transitioned
+        }
+
+        expired.forEach { candidate ->
+            eventBus.publish(
+                CommandExpiredEvent(
+                    commandId = candidate.id,
+                    deviceId = candidate.deviceId,
+                    type = candidate.type,
+                    expiresAtEpochMillis = candidate.expiresAt?.toEpochMilli(),
+                )
+            )
+        }
     }
 
     private fun mapRow(r: ResultRow): CommandRecord =

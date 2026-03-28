@@ -7,5 +7,6 @@ interface CommandDeliveryStrategy {
         deviceCode: String,
         sessionDeviceCode: String?,
         limit: Int,
+        ipAddress: String? = null,
     ): DevicePollCommandsResponse
 }

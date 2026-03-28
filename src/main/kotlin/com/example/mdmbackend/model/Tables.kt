@@ -68,6 +68,13 @@ object DevicesTable : UUIDTable("devices") {
     // NEW telemetry snapshot fields
     val networkType = varchar("network_type", 32).nullable()
     val foregroundPackage = varchar("foreground_package", 255).nullable()
+    val agentVersion = varchar("agent_version", 64).nullable()
+    val agentBuildCode = integer("agent_build_code").nullable()
+    val ipAddress = varchar("ip_address", 128).nullable()
+    val currentLauncherPackage = varchar("current_launcher_package", 255).nullable()
+    val uptimeMs = long("uptime_ms").nullable()
+    val abi = varchar("abi", 128).nullable()
+    val buildFingerprint = varchar("build_fingerprint", 512).nullable()
     val isDeviceOwner = bool("is_device_owner").default(false)
     val isLauncherDefault = bool("is_launcher_default").default(false)
     val isKioskRunning = bool("is_kiosk_running").default(false)
@@ -77,6 +84,8 @@ object DevicesTable : UUIDTable("devices") {
     val ramTotalMb = integer("ram_total_mb").default(0)
     val lastBootAt = timestamp("last_boot_at").nullable()
     val lastTelemetryAt = timestamp("last_telemetry_at").nullable()
+    val lastPollAt = timestamp("last_poll_at").nullable()
+    val lastCommandAckAt = timestamp("last_command_ack_at").nullable()
 
     // NEW desired vs applied policy fields
     val desiredConfigVersionEpochMillis = long("desired_config_version_epoch_millis").nullable()

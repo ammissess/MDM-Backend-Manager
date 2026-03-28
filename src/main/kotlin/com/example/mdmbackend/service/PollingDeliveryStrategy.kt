@@ -10,11 +10,13 @@ class PollingDeliveryStrategy(
         deviceCode: String,
         sessionDeviceCode: String?,
         limit: Int,
+        ipAddress: String?,
     ): DevicePollCommandsResponse {
         return commandService.leasePendingForPolling(
             deviceCode = deviceCode,
             sessionDeviceCode = sessionDeviceCode,
             limit = limit,
+            ipAddress = ipAddress,
         )
     }
 }

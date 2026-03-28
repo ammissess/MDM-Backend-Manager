@@ -128,6 +128,12 @@ class DeviceService(
             wifiEnabled = req.wifiEnabled,
             networkType = normalizedNetworkType,
             foregroundPackage = req.foregroundPackage,
+            agentVersion = req.agentVersion,
+            agentBuildCode = req.agentBuildCode,
+            currentLauncherPackage = req.currentLauncherPackage,
+            uptimeMs = req.uptimeMs,
+            abi = req.abi,
+            buildFingerprint = req.buildFingerprint,
             isDeviceOwner = req.isDeviceOwner,
             isLauncherDefault = req.isLauncherDefault,
             isKioskRunning = req.isKioskRunning,
@@ -310,6 +316,13 @@ private fun validateStateSnapshotRequest(req: DeviceStateSnapshotRequest): Strin
         throw invalidStateRequest(
             message = "Invalid field 'batteryLevel': must be between 0 and 100",
             errorCode = "INVALID_BATTERY_LEVEL"
+        )
+    }
+
+    if (req.uptimeMs != null && req.uptimeMs < 0) {
+        throw invalidStateRequest(
+            message = "Invalid field 'uptimeMs': must be >= 0",
+            errorCode = "INVALID_UPTIME"
         )
     }
 

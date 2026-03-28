@@ -64,7 +64,17 @@ class DeviceCommandService(
             reason = req.reason,
             errorCode = req.errorCode,
             now = Instant.now(),
-        ) ?: throw HttpException(HttpStatusCode.Conflict, "Command cannot be cancelled in current state")
+        ) ?: run {
+            val current = commands.getById(commandId)
+            if (current != null && current.deviceId == deviceId && current.status == CommandStatus.EXPIRED) {
+                throw HttpException(
+                    status = HttpStatusCode.Conflict,
+                    message = "Command is expired and cannot be cancelled",
+                    code = "COMMAND_EXPIRED"
+                )
+            }
+            throw HttpException(HttpStatusCode.Conflict, "Command cannot be cancelled in current state")
+        }
 
         return AdminCancelCommandResponse(
             ok = true,
@@ -81,7 +91,8 @@ class DeviceCommandService(
         deviceCode: String,
         sessionDeviceCode: String?,
         limit: Int,
-        leaseSeconds: Long = 60
+        leaseSeconds: Long = 60,
+        ipAddress: String? = null,
     ): DevicePollCommandsResponse {
         if (sessionDeviceCode == null || sessionDeviceCode != deviceCode) {
             throw IllegalStateException("DeviceCode mismatch with session")
@@ -92,10 +103,13 @@ class DeviceCommandService(
             commands.leaseNext(device.id, leaseSeconds, Instant.now())
         }.map { it.toLeasedDto() }
 
+        // Poll endpoint is an online heartbeat; keep nullable-first by storing IP only when available.
+        devices.touchPollSuccess(deviceCode = deviceCode, ipAddress = ipAddress)
+
         return DevicePollCommandsResponse(commands = leased, serverTimeEpochMillis = System.currentTimeMillis())
     }
 
-    fun deviceAck(req: DeviceAckCommandRequest, sessionDeviceCode: String?): DeviceAckCommandResponse {
+    fun deviceAck(req: DeviceAckCommandRequest, sessionDeviceCode: String?, ipAddress: String? = null): DeviceAckCommandResponse {
         if (sessionDeviceCode == null || sessionDeviceCode != req.deviceCode) {
             throw IllegalStateException("DeviceCode mismatch with session")
         }
@@ -117,7 +131,19 @@ class DeviceCommandService(
             error = req.error,
             errorCode = req.errorCode,
             output = req.output,
-        ) ?: throw IllegalStateException("Lease mismatch or command not found")
+        ) ?: run {
+            val current = commands.getById(cmdId)
+            if (current != null && current.deviceId == device.id && current.status == CommandStatus.EXPIRED) {
+                throw HttpException(
+                    status = HttpStatusCode.Conflict,
+                    message = "Command is expired and cannot be acknowledged",
+                    code = "COMMAND_EXPIRED"
+                )
+            }
+            throw IllegalStateException("Lease mismatch or command not found")
+        }
+
+        devices.touchAckSuccess(deviceCode = req.deviceCode, ipAddress = ipAddress)
 
         return DeviceAckCommandResponse(ok = true, status = updated.status.name)
     }

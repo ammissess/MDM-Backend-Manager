@@ -11,6 +11,7 @@ import com.example.mdmbackend.middleware.configureSerialization
 import com.example.mdmbackend.routes.registerRoutes
 import com.example.mdmbackend.service.AuditService
 import com.example.mdmbackend.service.EventBusHolder
+import com.example.mdmbackend.service.TelemetryRetentionService
 import io.ktor.server.application.*
 import io.ktor.server.response.*
 import io.ktor.server.routing.*
@@ -36,6 +37,13 @@ fun Application.module() {
 
     // Register audit subscribers once at startup
     AuditService().registerEventSubscribers(EventBusHolder.bus)
+
+    // Lightweight retention pass at startup, without introducing scheduler complexity.
+    val cleanup = TelemetryRetentionService.fromConfig(cfg).runCleanup()
+    environment.log.info(
+        "Telemetry retention cleanup: deleted events=${cleanup.eventRowsDeleted}, usage=${cleanup.usageRowsDeleted}, " +
+            "eventCutoffEpochMillis=${cleanup.eventCutoffEpochMillis}, usageCutoffEpochMillis=${cleanup.usageCutoffEpochMillis}"
+    )
 
     configureAuth(cfg)
 

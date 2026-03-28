@@ -8,8 +8,12 @@ import com.example.mdmbackend.util.PasswordHasher
 import org.jetbrains.exposed.dao.id.EntityID
 import org.jetbrains.exposed.sql.Op
 import org.jetbrains.exposed.sql.ResultRow
+import org.jetbrains.exposed.sql.SqlExpressionBuilder.greaterEq
+import org.jetbrains.exposed.sql.SqlExpressionBuilder.lessEq
 import org.jetbrains.exposed.sql.SortOrder
 import org.jetbrains.exposed.sql.andWhere
+import org.jetbrains.exposed.sql.count
+import org.jetbrains.exposed.sql.deleteWhere
 import org.jetbrains.exposed.sql.insert
 import org.jetbrains.exposed.sql.leftJoin
 import org.jetbrains.exposed.sql.selectAll
@@ -34,6 +38,13 @@ data class DeviceRecord(
     val wifiEnabled: Boolean,
     val networkType: String?,
     val foregroundPackage: String?,
+    val agentVersion: String?,
+    val agentBuildCode: Int?,
+    val ipAddress: String?,
+    val currentLauncherPackage: String?,
+    val uptimeMs: Long?,
+    val abi: String?,
+    val buildFingerprint: String?,
     val isDeviceOwner: Boolean,
     val isLauncherDefault: Boolean,
     val isKioskRunning: Boolean,
@@ -43,6 +54,8 @@ data class DeviceRecord(
     val ramTotalMb: Int,
     val lastBootAt: Instant?,
     val lastTelemetryAt: Instant?,
+    val lastPollAt: Instant?,
+    val lastCommandAckAt: Instant?,
     val desiredConfigVersionEpochMillis: Long?,
     val desiredConfigHash: String?,
     val appliedConfigVersionEpochMillis: Long?,
@@ -67,6 +80,11 @@ data class EventRecord(
     val createdAt: Instant,
 )
 
+data class EventCountRecord(
+    val key: String,
+    val count: Long,
+)
+
 data class StateSnapshotUpsert(
     val reportedAt: Instant,
     val batteryLevel: Int?,
@@ -74,6 +92,12 @@ data class StateSnapshotUpsert(
     val wifiEnabled: Boolean?,
     val networkType: String?,
     val foregroundPackage: String?,
+    val agentVersion: String?,
+    val agentBuildCode: Int?,
+    val currentLauncherPackage: String?,
+    val uptimeMs: Long?,
+    val abi: String?,
+    val buildFingerprint: String?,
     val isDeviceOwner: Boolean?,
     val isLauncherDefault: Boolean?,
     val isKioskRunning: Boolean?,
@@ -94,6 +118,10 @@ data class PolicyStateUpsert(
 )
 
 class DeviceRepository {
+
+    fun cleanupEventsOlderThan(cutoff: Instant): Int = transaction {
+        DeviceEventsTable.deleteWhere { DeviceEventsTable.createdAt lessEq cutoff }
+    }
 
     fun upsertRegister(
         deviceCode: String,
@@ -162,6 +190,12 @@ class DeviceRepository {
 
             if (snapshot.networkType != null) it[DevicesTable.networkType] = snapshot.networkType
             if (snapshot.foregroundPackage != null) it[DevicesTable.foregroundPackage] = snapshot.foregroundPackage
+            if (snapshot.agentVersion != null) it[DevicesTable.agentVersion] = snapshot.agentVersion
+            snapshot.agentBuildCode?.let { v -> it[DevicesTable.agentBuildCode] = v }
+            if (snapshot.currentLauncherPackage != null) it[DevicesTable.currentLauncherPackage] = snapshot.currentLauncherPackage
+            snapshot.uptimeMs?.let { v -> it[DevicesTable.uptimeMs] = v }
+            if (snapshot.abi != null) it[DevicesTable.abi] = snapshot.abi
+            if (snapshot.buildFingerprint != null) it[DevicesTable.buildFingerprint] = snapshot.buildFingerprint
             snapshot.isDeviceOwner?.let { v -> it[DevicesTable.isDeviceOwner] = v }
             snapshot.isLauncherDefault?.let { v -> it[DevicesTable.isLauncherDefault] = v }
             snapshot.isKioskRunning?.let { v -> it[DevicesTable.isKioskRunning] = v }
@@ -173,6 +207,32 @@ class DeviceRepository {
 
             it[DevicesTable.lastTelemetryAt] = snapshot.reportedAt
             it[DevicesTable.lastSeenAt] = Instant.now()
+        }
+        if (updated == 0) return@transaction null
+        findByDeviceCode(deviceCode)
+    }
+
+    fun touchPollSuccess(deviceCode: String, ipAddress: String?): DeviceRecord? = transaction {
+        val now = Instant.now()
+        val updated = DevicesTable.update({ DevicesTable.deviceCode eq deviceCode }) {
+            it[DevicesTable.lastPollAt] = now
+            it[DevicesTable.lastSeenAt] = now
+            if (!ipAddress.isNullOrBlank()) {
+                it[DevicesTable.ipAddress] = ipAddress
+            }
+        }
+        if (updated == 0) return@transaction null
+        findByDeviceCode(deviceCode)
+    }
+
+    fun touchAckSuccess(deviceCode: String, ipAddress: String?): DeviceRecord? = transaction {
+        val now = Instant.now()
+        val updated = DevicesTable.update({ DevicesTable.deviceCode eq deviceCode }) {
+            it[DevicesTable.lastCommandAckAt] = now
+            it[DevicesTable.lastSeenAt] = now
+            if (!ipAddress.isNullOrBlank()) {
+                it[DevicesTable.ipAddress] = ipAddress
+            }
         }
         if (updated == 0) return@transaction null
         findByDeviceCode(deviceCode)
@@ -407,6 +467,12 @@ class DeviceRepository {
             }
     }
 
+    fun countEventsByType(deviceId: UUID): List<EventCountRecord> = countEventsGroupedBy(deviceId, DeviceEventsTable.type)
+
+    fun countEventsByCategory(deviceId: UUID): List<EventCountRecord> = countEventsGroupedBy(deviceId, DeviceEventsTable.category)
+
+    fun countEventsBySeverity(deviceId: UUID): List<EventCountRecord> = countEventsGroupedBy(deviceId, DeviceEventsTable.severity)
+
     fun lockDevice(id: UUID): Boolean = transaction {
         DevicesTable.update({ DevicesTable.id eq EntityID(id, DevicesTable) }) {
             it[DevicesTable.status] = DeviceStatus.LOCKED
@@ -438,6 +504,13 @@ class DeviceRepository {
             wifiEnabled = row[DevicesTable.wifiEnabled],
             networkType = row.getOrNull(DevicesTable.networkType),
             foregroundPackage = row.getOrNull(DevicesTable.foregroundPackage),
+            agentVersion = row.getOrNull(DevicesTable.agentVersion),
+            agentBuildCode = row.getOrNull(DevicesTable.agentBuildCode),
+            ipAddress = row.getOrNull(DevicesTable.ipAddress),
+            currentLauncherPackage = row.getOrNull(DevicesTable.currentLauncherPackage),
+            uptimeMs = row.getOrNull(DevicesTable.uptimeMs),
+            abi = row.getOrNull(DevicesTable.abi),
+            buildFingerprint = row.getOrNull(DevicesTable.buildFingerprint),
             isDeviceOwner = row[DevicesTable.isDeviceOwner],
             isLauncherDefault = row[DevicesTable.isLauncherDefault],
             isKioskRunning = row[DevicesTable.isKioskRunning],
@@ -447,6 +520,8 @@ class DeviceRepository {
             ramTotalMb = row[DevicesTable.ramTotalMb],
             lastBootAt = row.getOrNull(DevicesTable.lastBootAt),
             lastTelemetryAt = row.getOrNull(DevicesTable.lastTelemetryAt),
+            lastPollAt = row.getOrNull(DevicesTable.lastPollAt),
+            lastCommandAckAt = row.getOrNull(DevicesTable.lastCommandAckAt),
             desiredConfigVersionEpochMillis = row.getOrNull(DevicesTable.desiredConfigVersionEpochMillis),
             desiredConfigHash = row.getOrNull(DevicesTable.desiredConfigHash),
             appliedConfigVersionEpochMillis = row.getOrNull(DevicesTable.appliedConfigVersionEpochMillis),
@@ -458,5 +533,24 @@ class DeviceRepository {
             status = row[DevicesTable.status].name,
             lastSeenAt = row[DevicesTable.lastSeenAt],
         )
+    }
+
+    private fun countEventsGroupedBy(
+        deviceId: UUID,
+        dimension: org.jetbrains.exposed.sql.Expression<String>,
+    ): List<EventCountRecord> = transaction {
+        val totalCount = DeviceEventsTable.id.count()
+
+        DeviceEventsTable
+            .select(dimension, totalCount)
+            .where { DeviceEventsTable.deviceId eq EntityID(deviceId, DevicesTable) }
+            .groupBy(dimension)
+            .orderBy(totalCount, SortOrder.DESC)
+            .map { row ->
+                EventCountRecord(
+                    key = row[dimension],
+                    count = row[totalCount],
+                )
+            }
     }
 }

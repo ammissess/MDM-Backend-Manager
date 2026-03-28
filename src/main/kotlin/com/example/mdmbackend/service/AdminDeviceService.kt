@@ -5,12 +5,16 @@ import com.example.mdmbackend.dto.DeviceResponse
 import com.example.mdmbackend.dto.AdminCreateCommandRequest
 import com.example.mdmbackend.dto.AdminDeviceEventView
 import com.example.mdmbackend.dto.AdminDeviceEventsFilter
+import com.example.mdmbackend.dto.AdminTelemetrySummaryResponse
+import com.example.mdmbackend.dto.AggregateCountItem
 import com.example.mdmbackend.dto.ComplianceSummary
 import com.example.mdmbackend.dto.HealthSummary
 import com.example.mdmbackend.model.CommandType
+import com.example.mdmbackend.repository.AuditRepository
 import com.example.mdmbackend.repository.DeviceRepository
 import com.example.mdmbackend.repository.ProfileRepository
 import com.example.mdmbackend.util.PasswordHasher
+import java.time.Instant
 import java.util.UUID
 
 class AdminDeviceService(
@@ -18,6 +22,7 @@ class AdminDeviceService(
     private val profiles: ProfileRepository,
     private val commands: DeviceCommandService,
     private val audit: AuditService,
+    private val auditRepo: AuditRepository = AuditRepository(),
     private val eventBus: EventBus = EventBusHolder.bus,
 ) {
     companion object {
@@ -30,6 +35,31 @@ class AdminDeviceService(
     fun getById(id: UUID): DeviceResponse? = devices.findById(id)?.toDeviceResponse()
 
     fun getDetailById(id: UUID): DeviceDetailResponse? = devices.findDetailById(id)?.toDeviceDetailResponse()
+
+    fun getTelemetrySummaryById(id: UUID): AdminTelemetrySummaryResponse? {
+        val device = devices.findById(id) ?: return null
+        val now = Instant.now()
+
+        return AdminTelemetrySummaryResponse(
+            deviceId = id.toString(),
+            eventCountByType = devices.countEventsByType(id).map { AggregateCountItem(it.key, it.count) },
+            eventCountByCategory = devices.countEventsByCategory(id).map { AggregateCountItem(it.key, it.count) },
+            eventCountBySeverity = devices.countEventsBySeverity(id).map { AggregateCountItem(it.key, it.count) },
+            policyApplyFailed24h = auditRepo.countByActionAndTarget(
+                action = "POLICY_APPLY_REPORTED_FAILED",
+                targetType = "DEVICE",
+                targetId = device.deviceCode,
+                from = now.minusSeconds(24 * 60 * 60),
+            ),
+            policyApplyFailed7d = auditRepo.countByActionAndTarget(
+                action = "POLICY_APPLY_REPORTED_FAILED",
+                targetType = "DEVICE",
+                targetId = device.deviceCode,
+                from = now.minusSeconds(7 * 24 * 60 * 60),
+            ),
+            generatedAtEpochMillis = now.toEpochMilli(),
+        )
+    }
 
     fun listEvents(deviceId: UUID, filter: AdminDeviceEventsFilter): List<AdminDeviceEventView> =
         devices.listEvents(
@@ -165,6 +195,13 @@ class AdminDeviceService(
             wifiEnabled = wifiEnabled,
             networkType = networkType,
             foregroundPackage = foregroundPackage,
+            agentVersion = agentVersion,
+            agentBuildCode = agentBuildCode,
+            ipAddress = ipAddress,
+            currentLauncherPackage = currentLauncherPackage,
+            uptimeMs = uptimeMs,
+            abi = abi,
+            buildFingerprint = buildFingerprint,
             isDeviceOwner = isDeviceOwner,
             isLauncherDefault = isLauncherDefault,
             isKioskRunning = isKioskRunning,
@@ -174,6 +211,8 @@ class AdminDeviceService(
             ramTotalMb = ramTotalMb,
             lastBootAtEpochMillis = lastBootAt?.toEpochMilli(),
             lastTelemetryAtEpochMillis = lastTelemetryAt?.toEpochMilli(),
+            lastPollAtEpochMillis = lastPollAt?.toEpochMilli(),
+            lastCommandAckAtEpochMillis = lastCommandAckAt?.toEpochMilli(),
             desiredConfigVersionEpochMillis = desiredConfigVersionEpochMillis,
             desiredConfigHash = desiredConfigHash,
             appliedConfigVersionEpochMillis = appliedConfigVersionEpochMillis,

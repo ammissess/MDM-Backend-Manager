@@ -290,6 +290,21 @@ fun Route.adminRoutes() {
                     call.respond(devices.listEvents(deviceId, filter))
                 }
 
+                get("/{id}/telemetry/summary") {
+                    val principal = call.principal<UserPrincipal>()!!
+                    if (principal.role != Role.ADMIN) {
+                        call.respond(HttpStatusCode.Forbidden, mapOf("error" to "Forbidden"))
+                        return@get
+                    }
+
+                    val deviceId = runCatching { UUID.fromString(call.parameters["id"]!!) }
+                        .getOrElse { throw HttpException(HttpStatusCode.BadRequest, "Invalid UUID format: ${call.parameters["id"]}") }
+
+                    val summary = devices.getTelemetrySummaryById(deviceId)
+                        ?: throw HttpException(HttpStatusCode.NotFound, "Device not found")
+                    call.respond(summary)
+                }
+
                 get("/{id}/usage/summary") {
                     val principal = call.principal<UserPrincipal>()!!
                     if (principal.role != Role.ADMIN) {
