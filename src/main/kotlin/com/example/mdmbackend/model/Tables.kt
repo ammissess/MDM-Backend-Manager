@@ -101,6 +101,24 @@ object DevicesTable : UUIDTable("devices") {
     val lastSeenAt = timestamp("last_seen_at").clientDefault { Instant.now() }
 }
 
+object DeviceInstalledAppsTable : Table("device_installed_apps") {
+    val deviceId = reference("device_id", DevicesTable, onDelete = ReferenceOption.CASCADE)
+    val packageName = varchar("package_name", 255)
+    val appName = varchar("app_name", 255).nullable()
+    val versionName = varchar("version_name", 128).nullable()
+    val versionCode = long("version_code").nullable()
+    val isSystemApp = bool("is_system_app").nullable()
+    val hasLauncherActivity = bool("has_launcher_activity").nullable()
+    val installed = bool("installed").default(true)
+    val disabled = bool("disabled").nullable()
+    val hidden = bool("hidden").nullable()
+    val suspended = bool("suspended").nullable()
+    val firstSeenAt = timestamp("first_seen_at")
+    val lastSeenAt = timestamp("last_seen_at")
+
+    override val primaryKey = PrimaryKey(deviceId, packageName)
+}
+
 object DeviceEventsTable : UUIDTable("device_events") {
     val deviceId = reference("device_id", DevicesTable, onDelete = ReferenceOption.CASCADE)
     val type = varchar("type", 64)

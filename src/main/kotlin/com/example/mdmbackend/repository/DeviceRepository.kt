@@ -1,6 +1,7 @@
 package com.example.mdmbackend.repository
 
 import com.example.mdmbackend.model.DeviceEventsTable
+import com.example.mdmbackend.model.DeviceInstalledAppsTable
 import com.example.mdmbackend.model.DeviceStatus
 import com.example.mdmbackend.model.DevicesTable
 import com.example.mdmbackend.model.ProfilesTable
@@ -8,9 +9,11 @@ import com.example.mdmbackend.util.PasswordHasher
 import org.jetbrains.exposed.dao.id.EntityID
 import org.jetbrains.exposed.sql.Op
 import org.jetbrains.exposed.sql.ResultRow
+import org.jetbrains.exposed.sql.SqlExpressionBuilder.eq
 import org.jetbrains.exposed.sql.SqlExpressionBuilder.greaterEq
 import org.jetbrains.exposed.sql.SqlExpressionBuilder.lessEq
 import org.jetbrains.exposed.sql.SortOrder
+import org.jetbrains.exposed.sql.and
 import org.jetbrains.exposed.sql.andWhere
 import org.jetbrains.exposed.sql.count
 import org.jetbrains.exposed.sql.deleteWhere
@@ -83,6 +86,38 @@ data class EventRecord(
 data class EventCountRecord(
     val key: String,
     val count: Long,
+)
+
+data class AppInventoryItemUpsert(
+    val packageName: String,
+    val appName: String?,
+    val versionName: String?,
+    val versionCode: Long?,
+    val isSystemApp: Boolean?,
+    val hasLauncherActivity: Boolean?,
+    val installed: Boolean,
+    val disabled: Boolean?,
+    val hidden: Boolean?,
+    val suspended: Boolean?,
+)
+
+data class DeviceInstalledAppRecord(
+    val packageName: String,
+    val appName: String?,
+    val versionName: String?,
+    val versionCode: Long?,
+    val isSystemApp: Boolean?,
+    val hasLauncherActivity: Boolean?,
+    val installed: Boolean,
+    val disabled: Boolean?,
+    val hidden: Boolean?,
+    val suspended: Boolean?,
+    val lastSeenAt: Instant,
+)
+
+data class DeviceInstalledAppsSnapshotRecord(
+    val deviceId: UUID,
+    val items: List<DeviceInstalledAppRecord>,
 )
 
 data class StateSnapshotUpsert(
@@ -253,6 +288,74 @@ class DeviceRepository {
         findByDeviceCode(deviceCode)
     }
 
+    fun upsertInstalledAppsInventory(
+        deviceCode: String,
+        reportedAt: Instant,
+        apps: List<AppInventoryItemUpsert>,
+    ): Int? = transaction {
+        val deviceRow = DevicesTable
+            .select(DevicesTable.id)
+            .where { DevicesTable.deviceCode eq deviceCode }
+            .limit(1)
+            .firstOrNull()
+            ?: return@transaction null
+
+        val deviceId = deviceRow[DevicesTable.id].value
+        val deviceRef = EntityID(deviceId, DevicesTable)
+        var upserted = 0
+
+        apps.forEach { app ->
+            val devicePackagePredicate: Op<Boolean> = Op.build {
+                (DeviceInstalledAppsTable.deviceId eq deviceRef) and
+                    (DeviceInstalledAppsTable.packageName eq app.packageName)
+            }
+
+            val existing = DeviceInstalledAppsTable
+                .select(DeviceInstalledAppsTable.firstSeenAt)
+                .where { devicePackagePredicate }
+                .limit(1)
+                .firstOrNull()
+
+            if (existing == null) {
+                DeviceInstalledAppsTable.insert {
+                    it[DeviceInstalledAppsTable.deviceId] = deviceRef
+                    it[DeviceInstalledAppsTable.packageName] = app.packageName
+                    it[DeviceInstalledAppsTable.appName] = app.appName
+                    it[DeviceInstalledAppsTable.versionName] = app.versionName
+                    it[DeviceInstalledAppsTable.versionCode] = app.versionCode
+                    it[DeviceInstalledAppsTable.isSystemApp] = app.isSystemApp
+                    it[DeviceInstalledAppsTable.hasLauncherActivity] = app.hasLauncherActivity
+                    it[DeviceInstalledAppsTable.installed] = app.installed
+                    it[DeviceInstalledAppsTable.disabled] = app.disabled
+                    it[DeviceInstalledAppsTable.hidden] = app.hidden
+                    it[DeviceInstalledAppsTable.suspended] = app.suspended
+                    it[DeviceInstalledAppsTable.firstSeenAt] = reportedAt
+                    it[DeviceInstalledAppsTable.lastSeenAt] = reportedAt
+                }
+            } else {
+                DeviceInstalledAppsTable.update({ devicePackagePredicate }) {
+                    it[DeviceInstalledAppsTable.appName] = app.appName
+                    it[DeviceInstalledAppsTable.versionName] = app.versionName
+                    it[DeviceInstalledAppsTable.versionCode] = app.versionCode
+                    it[DeviceInstalledAppsTable.isSystemApp] = app.isSystemApp
+                    it[DeviceInstalledAppsTable.hasLauncherActivity] = app.hasLauncherActivity
+                    it[DeviceInstalledAppsTable.installed] = app.installed
+                    it[DeviceInstalledAppsTable.disabled] = app.disabled
+                    it[DeviceInstalledAppsTable.hidden] = app.hidden
+                    it[DeviceInstalledAppsTable.suspended] = app.suspended
+                    it[DeviceInstalledAppsTable.lastSeenAt] = reportedAt
+                }
+            }
+            upserted++
+        }
+
+        DevicesTable.update({ DevicesTable.id eq deviceRef }) {
+            it[DevicesTable.lastSeenAt] = Instant.now()
+        }
+
+        upserted
+    }
+
     fun updateDesiredConfigForProfileDevices(
         profileId: UUID,
         desiredConfigHash: String,
@@ -421,6 +524,41 @@ class DeviceRepository {
             it[DevicesTable.lastSeenAt] = Instant.now()
         }
         true
+    }
+
+    fun getInstalledAppsByDeviceId(deviceId: UUID): DeviceInstalledAppsSnapshotRecord? = transaction {
+        val deviceRow = DevicesTable
+            .select(DevicesTable.id)
+            .where { DevicesTable.id eq EntityID(deviceId, DevicesTable) }
+            .limit(1)
+            .firstOrNull()
+            ?: return@transaction null
+
+        val deviceRef = EntityID(deviceId, DevicesTable)
+        val apps = DeviceInstalledAppsTable
+            .selectAll()
+            .where { DeviceInstalledAppsTable.deviceId eq deviceRef }
+            .orderBy(DeviceInstalledAppsTable.packageName)
+            .map { row ->
+                DeviceInstalledAppRecord(
+                    packageName = row[DeviceInstalledAppsTable.packageName],
+                    appName = row.getOrNull(DeviceInstalledAppsTable.appName),
+                    versionName = row.getOrNull(DeviceInstalledAppsTable.versionName),
+                    versionCode = row.getOrNull(DeviceInstalledAppsTable.versionCode),
+                    isSystemApp = row.getOrNull(DeviceInstalledAppsTable.isSystemApp),
+                    hasLauncherActivity = row.getOrNull(DeviceInstalledAppsTable.hasLauncherActivity),
+                    installed = row[DeviceInstalledAppsTable.installed],
+                    disabled = row.getOrNull(DeviceInstalledAppsTable.disabled),
+                    hidden = row.getOrNull(DeviceInstalledAppsTable.hidden),
+                    suspended = row.getOrNull(DeviceInstalledAppsTable.suspended),
+                    lastSeenAt = row[DeviceInstalledAppsTable.lastSeenAt],
+                )
+            }
+
+        DeviceInstalledAppsSnapshotRecord(
+            deviceId = deviceId,
+            items = apps,
+        )
     }
 
     fun listEvents(

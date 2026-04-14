@@ -2,6 +2,9 @@ package com.example.mdmbackend.service
 
 import com.example.mdmbackend.config.AppConfig
 import com.example.mdmbackend.dto.DeviceEventRequest
+import com.example.mdmbackend.dto.DeviceAppInventoryItem
+import com.example.mdmbackend.dto.DeviceAppInventoryReportRequest
+import com.example.mdmbackend.dto.DeviceAppInventoryReportResponse
 import com.example.mdmbackend.dto.DevicePolicyStateReportRequest
 import com.example.mdmbackend.dto.DevicePolicyStateResponse
 import com.example.mdmbackend.dto.DeviceRegisterRequest
@@ -18,6 +21,7 @@ import com.example.mdmbackend.model.DeviceStatus
 import com.example.mdmbackend.repository.DeviceAppUsageRepository
 import com.example.mdmbackend.repository.DevicePrivateInfoRepository
 import com.example.mdmbackend.repository.DeviceRepository
+import com.example.mdmbackend.repository.AppInventoryItemUpsert
 import com.example.mdmbackend.repository.PolicyStateUpsert
 import com.example.mdmbackend.repository.ProfileRepository
 import com.example.mdmbackend.repository.StateSnapshotUpsert
@@ -168,6 +172,48 @@ class DeviceService(
         )
 
         return DeviceStateSnapshotResponse(ok = true, updatedAtEpochMillis = Instant.now().toEpochMilli())
+    }
+
+    fun upsertAppInventory(
+        req: DeviceAppInventoryReportRequest,
+        actorType: String = "DEVICE",
+        actorUserId: UUID? = null,
+    ): DeviceAppInventoryReportResponse? {
+        val normalizedReq = normalizeAppInventoryRequest(req)
+
+        val upserted = devices.upsertInstalledAppsInventory(
+            deviceCode = normalizedReq.deviceCode,
+            reportedAt = Instant.ofEpochMilli(normalizedReq.reportedAtEpochMillis),
+            apps = normalizedReq.items.map { app ->
+                AppInventoryItemUpsert(
+                    packageName = app.packageName,
+                    appName = app.appName,
+                    versionName = app.versionName,
+                    versionCode = app.versionCode,
+                    isSystemApp = app.isSystemApp,
+                    hasLauncherActivity = app.hasLauncherActivity,
+                    installed = app.installed,
+                    disabled = app.disabled,
+                    hidden = app.hidden,
+                    suspended = app.suspended,
+                )
+            }
+        ) ?: return null
+
+        eventBus.publish(
+            TelemetryReceivedEvent(
+                telemetryType = "app_inventory",
+                deviceCode = normalizedReq.deviceCode,
+                actorType = actorType,
+                actorUserId = actorUserId,
+            )
+        )
+
+        return DeviceAppInventoryReportResponse(
+            ok = true,
+            upserted = upserted,
+            updatedAtEpochMillis = Instant.now().toEpochMilli(),
+        )
     }
 
     fun upsertPolicyState(
@@ -408,7 +454,58 @@ private fun validateStateSnapshotRequest(req: DeviceStateSnapshotRequest): Strin
     return normalizedNetworkType
 }
 
+private fun normalizeAppInventoryRequest(req: DeviceAppInventoryReportRequest): DeviceAppInventoryReportRequest {
+    val nowMillis = System.currentTimeMillis()
+    val maxAllowedEpochMillis = nowMillis + DeviceAppInventoryReportRequest.MAX_FUTURE_DRIFT_MILLIS
+
+    if (req.reportedAtEpochMillis > maxAllowedEpochMillis) {
+        throw invalidAppInventoryRequest(
+            message = "Invalid field 'reportedAtEpochMillis': timestamp is too far in the future",
+            errorCode = "INVALID_REPORTED_AT"
+        )
+    }
+
+    val normalizedItems = LinkedHashMap<String, DeviceAppInventoryItem>()
+    req.items.forEach { app ->
+        val packageName = app.packageName.trim()
+        if (packageName.isEmpty()) {
+            throw invalidAppInventoryRequest(
+                message = "Invalid field 'packageName': must be non-blank",
+                errorCode = "INVALID_PACKAGE_NAME"
+            )
+        }
+
+        val versionCode = app.versionCode?.also { code ->
+            if (code < 0) {
+                throw invalidAppInventoryRequest(
+                    message = "Invalid field 'versionCode': must be >= 0",
+                    errorCode = "INVALID_VERSION_CODE"
+                )
+            }
+        }
+
+        normalizedItems.remove(packageName)
+        normalizedItems[packageName] = DeviceAppInventoryItem(
+            packageName = packageName,
+            appName = app.appName?.trim()?.takeIf { it.isNotEmpty() },
+            versionName = app.versionName?.trim()?.takeIf { it.isNotEmpty() },
+            versionCode = versionCode,
+            isSystemApp = app.isSystemApp,
+            hasLauncherActivity = app.hasLauncherActivity,
+            installed = app.installed,
+            disabled = app.disabled,
+            hidden = app.hidden,
+            suspended = app.suspended,
+        )
+    }
+
+    return req.copy(items = normalizedItems.values.toList())
+}
+
 private fun invalidStateRequest(message: String, errorCode: String): HttpException =
+    HttpException(HttpStatusCode.BadRequest, message, errorCode)
+
+private fun invalidAppInventoryRequest(message: String, errorCode: String): HttpException =
     HttpException(HttpStatusCode.BadRequest, message, errorCode)
 
 private fun validatePolicyStateRequest(req: DevicePolicyStateReportRequest): DevicePolicyStateReportRequest {

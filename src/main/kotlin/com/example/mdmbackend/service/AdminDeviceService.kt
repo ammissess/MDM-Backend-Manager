@@ -3,6 +3,8 @@ package com.example.mdmbackend.service
 import com.example.mdmbackend.dto.DeviceDetailResponse
 import com.example.mdmbackend.dto.DeviceResponse
 import com.example.mdmbackend.dto.AdminCreateCommandRequest
+import com.example.mdmbackend.dto.AdminDeviceAppView
+import com.example.mdmbackend.dto.AdminDeviceAppsResponse
 import com.example.mdmbackend.dto.AdminDeviceEventView
 import com.example.mdmbackend.dto.AdminDeviceEventsFilter
 import com.example.mdmbackend.dto.AdminTelemetrySummaryResponse
@@ -35,6 +37,29 @@ class AdminDeviceService(
     fun getById(id: UUID): DeviceResponse? = devices.findById(id)?.toDeviceResponse()
 
     fun getDetailById(id: UUID): DeviceDetailResponse? = devices.findDetailById(id)?.toDeviceDetailResponse()
+
+    fun getAppInventoryById(id: UUID): AdminDeviceAppsResponse? =
+        devices.getInstalledAppsByDeviceId(id)?.let { snapshot ->
+            AdminDeviceAppsResponse(
+                deviceId = snapshot.deviceId.toString(),
+                items = snapshot.items.map { app ->
+                    AdminDeviceAppView(
+                        packageName = app.packageName,
+                        appName = app.appName,
+                        versionName = app.versionName,
+                        versionCode = app.versionCode,
+                        isSystemApp = app.isSystemApp,
+                        hasLauncherActivity = app.hasLauncherActivity,
+                        installed = app.installed,
+                        disabled = app.disabled,
+                        hidden = app.hidden,
+                        suspended = app.suspended,
+                        lastSeenAtEpochMillis = app.lastSeenAt.toEpochMilli(),
+                    )
+                },
+                total = snapshot.items.size.toLong(),
+            )
+        }
 
     fun getTelemetrySummaryById(id: UUID): AdminTelemetrySummaryResponse? {
         val device = devices.findById(id) ?: return null

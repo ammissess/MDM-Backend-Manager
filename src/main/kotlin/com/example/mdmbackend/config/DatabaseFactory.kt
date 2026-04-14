@@ -33,6 +33,7 @@ object DatabaseFactory {
                 ProfilesTable,
                 ProfileAllowedAppsTable,
                 DevicesTable,
+                DeviceInstalledAppsTable,
                 DevicePrivateInfoTable,
                 DeviceAppUsageTable,
                 DeviceEventsTable,

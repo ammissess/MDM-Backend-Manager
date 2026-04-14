@@ -3,6 +3,7 @@ package com.example.mdmbackend.routes
 import com.example.mdmbackend.config.AppConfig
 import com.example.mdmbackend.dto.DeviceAckCommandRequest
 import com.example.mdmbackend.dto.DeviceAckCommandResponse
+import com.example.mdmbackend.dto.DeviceAppInventoryReportRequest
 import com.example.mdmbackend.dto.DeviceEventRequest
 import com.example.mdmbackend.dto.DevicePolicyStateReportRequest
 import com.example.mdmbackend.dto.DevicePolicyStateResponse
@@ -225,6 +226,25 @@ fun Route.deviceRoutes(cfg: AppConfig) {
                     actorUserId = principal.userId
                 )
                 if (!resp.ok) throw HttpException(HttpStatusCode.NotFound, "Device not found")
+
+                call.respond(resp)
+            }
+
+            post("/apps/inventory") {
+                val principal = call.principal<UserPrincipal>()!!
+                if (principal.role != Role.DEVICE && principal.role != Role.ADMIN) {
+                    call.respond(HttpStatusCode.Forbidden, mapOf("error" to "Forbidden"))
+                    return@post
+                }
+
+                val req = call.receive<DeviceAppInventoryReportRequest>()
+                requireDeviceCodeMatchIfDevice(principal, req.deviceCode)
+
+                val resp = deviceService.upsertAppInventory(
+                    req = req,
+                    actorType = principal.role.name,
+                    actorUserId = principal.userId
+                ) ?: throw HttpException(HttpStatusCode.NotFound, "Device not found")
 
                 call.respond(resp)
             }

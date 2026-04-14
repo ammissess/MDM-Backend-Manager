@@ -174,6 +174,21 @@ fun Route.adminRoutes() {
                     call.respond(detail)
                 }
 
+                get("/{id}/apps") {
+                    val principal = call.principal<UserPrincipal>()!!
+                    if (principal.role != Role.ADMIN) {
+                        call.respond(HttpStatusCode.Forbidden, mapOf("error" to "Forbidden"))
+                        return@get
+                    }
+
+                    val id = runCatching { UUID.fromString(call.parameters["id"]!!) }
+                        .getOrElse { throw HttpException(HttpStatusCode.BadRequest, "Invalid UUID format: ${call.parameters["id"]}") }
+
+                    val inventory = devices.getAppInventoryById(id)
+                        ?: throw HttpException(HttpStatusCode.NotFound, "Device not found")
+                    call.respond(inventory)
+                }
+
                 put("/{id}/link") {
                     val principal = call.principal<UserPrincipal>()!!
                     if (principal.role != Role.ADMIN) {

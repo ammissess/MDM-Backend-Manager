@@ -40,6 +40,28 @@ data class AdminUsageSummaryResponse(
 )
 
 @Serializable
+data class AdminDeviceAppView(
+    val packageName: String,
+    val appName: String? = null,
+    val versionName: String? = null,
+    val versionCode: Long? = null,
+    val isSystemApp: Boolean? = null,
+    val hasLauncherActivity: Boolean? = null,
+    val installed: Boolean,
+    val disabled: Boolean? = null,
+    val hidden: Boolean? = null,
+    val suspended: Boolean? = null,
+    val lastSeenAtEpochMillis: Long,
+)
+
+@Serializable
+data class AdminDeviceAppsResponse(
+    val deviceId: String,
+    val items: List<AdminDeviceAppView>,
+    val total: Long,
+)
+
+@Serializable
 data class AggregateCountItem(
     val key: String,
     val count: Long,

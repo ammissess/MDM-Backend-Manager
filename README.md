@@ -27,6 +27,7 @@ Default: http://localhost:8080
 - POST `/api/device/location`
 - POST `/api/device/usage`
 - POST `/api/device/usage/batch`
+- POST `/api/device/apps/inventory`
 - POST `/api/device/{deviceCode}/events`
 
 ### Device config deprecated compatibility route
@@ -47,6 +48,7 @@ Default: http://localhost:8080
 ### Admin - devices
 - GET `/api/admin/devices`
 - GET `/api/admin/devices/{id}`
+- GET `/api/admin/devices/{id}/apps`
 - PUT `/api/admin/devices/{id}/link`
 - POST `/api/admin/devices/{id}/lock`
 - POST `/api/admin/devices/{id}/reset-unlock-pass`
