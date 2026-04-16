@@ -27,3 +27,5 @@ Thumbs.db
 *.bin
 
 secrets/
+.gradle-home/
+.kotlin/
