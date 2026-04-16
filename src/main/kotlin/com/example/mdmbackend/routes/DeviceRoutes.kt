@@ -17,8 +17,11 @@ import com.example.mdmbackend.dto.LocationUpdateRequest
 import com.example.mdmbackend.dto.UsageBatchReportRequest
 import com.example.mdmbackend.dto.UsageBatchReportResponse
 import com.example.mdmbackend.dto.UsageReportRequest
+import com.example.mdmbackend.middleware.InMemoryRateLimiter
 import com.example.mdmbackend.middleware.HttpException
 import com.example.mdmbackend.middleware.UserPrincipal
+import com.example.mdmbackend.middleware.bestEffortClientIpAddress
+import com.example.mdmbackend.middleware.enforceRateLimit
 import com.example.mdmbackend.model.Role
 import com.example.mdmbackend.repository.DeviceAppUsageRepository
 import com.example.mdmbackend.repository.DeviceCommandRepository
@@ -30,10 +33,8 @@ import com.example.mdmbackend.service.DeviceCommandService
 import com.example.mdmbackend.service.DeviceService
 import com.example.mdmbackend.service.PollingDeliveryStrategy
 import io.ktor.http.HttpStatusCode
-import io.ktor.server.application.ApplicationCall
 import io.ktor.server.auth.authenticate
 import io.ktor.server.auth.principal
-import io.ktor.server.plugins.origin
 import io.ktor.server.request.receive
 import io.ktor.server.response.respond
 import io.ktor.server.routing.Route
@@ -55,6 +56,7 @@ fun Route.deviceRoutes(cfg: AppConfig) {
     )
 
     val deviceService = DeviceService(cfg, deviceRepo, profileRepo, privateRepo, usageRepo)
+    val unlockRateLimiter = InMemoryRateLimiter(cfg.rateLimit.unlock)
 
     route("/device") {
         authenticate("session") {
@@ -162,6 +164,16 @@ fun Route.deviceRoutes(cfg: AppConfig) {
 
                 val req = call.receive<DeviceUnlockRequest>()
                 requireDeviceCodeMatchIfDevice(principal, req.deviceCode)
+                val unlockKey = buildString {
+                    append(req.deviceCode.trim())
+                    append('|')
+                    append(call.bestEffortClientIpAddress() ?: "unknown")
+                }
+                call.enforceRateLimit(
+                    limiter = unlockRateLimiter,
+                    key = unlockKey,
+                    message = "Too many unlock attempts. Retry later.",
+                )
 
                 val result = deviceService.unlock(
                     deviceCode = req.deviceCode,
@@ -385,17 +397,4 @@ private fun requireDeviceCodeMatchIfDevice(principal: UserPrincipal, requestedDe
             "DEVICE_CODE_MISMATCH"
         )
     }
-}
-
-private fun ApplicationCall.bestEffortClientIpAddress(): String? {
-    val forwardedFor = request.headers["X-Forwarded-For"]
-        ?.split(',')
-        ?.asSequence()
-        ?.map { it.trim() }
-        ?.firstOrNull { it.isNotEmpty() && !it.equals("unknown", ignoreCase = true) }
-
-    return forwardedFor
-        ?: request.origin.remoteHost
-            .trim()
-            .takeIf { it.isNotEmpty() && !it.equals("unknown", ignoreCase = true) }
 }

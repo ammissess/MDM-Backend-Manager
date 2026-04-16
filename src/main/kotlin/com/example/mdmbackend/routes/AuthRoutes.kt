@@ -3,10 +3,13 @@ package com.example.mdmbackend.routes
 import com.example.mdmbackend.config.AppConfig
 import com.example.mdmbackend.dto.LoginRequest
 import com.example.mdmbackend.dto.LoginResponse
+import com.example.mdmbackend.middleware.InMemoryRateLimiter
 import com.example.mdmbackend.service.AuthService
 import com.example.mdmbackend.repository.SessionRepository
 import com.example.mdmbackend.repository.UserRepository
 import com.example.mdmbackend.middleware.UserPrincipal
+import com.example.mdmbackend.middleware.bestEffortClientIpAddress
+import com.example.mdmbackend.middleware.enforceRateLimit
 import com.example.mdmbackend.service.AuditService
 import io.ktor.http.*
 import io.ktor.server.application.*
@@ -18,10 +21,22 @@ import io.ktor.server.routing.*
 fun Route.authRoutes(cfg: AppConfig) {
     val auth = AuthService(cfg, UserRepository(), SessionRepository())
     val audit = AuditService()
+    val loginRateLimiter = InMemoryRateLimiter(cfg.rateLimit.login)
 
     route("/auth") {
         post("/login") {
             val req = call.receive<LoginRequest>()
+            val loginKey = buildString {
+                append(req.username.trim().lowercase())
+                append('|')
+                append(call.bestEffortClientIpAddress() ?: "unknown")
+            }
+            call.enforceRateLimit(
+                limiter = loginRateLimiter,
+                key = loginKey,
+                message = "Too many login attempts. Retry later.",
+            )
+
             val result = auth.login(req)
             if (result == null) {
                 call.respond(HttpStatusCode.Unauthorized, mapOf("error" to "Invalid credentials"))

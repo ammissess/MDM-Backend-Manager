@@ -21,13 +21,13 @@ class CorsIntegrationTest {
         configureCorsTestApplication()
 
         val resp = client.get("/health") {
-            header(HttpHeaders.Origin, "http://localhost:3000")
+            header(HttpHeaders.Origin, "http://localhost:5173")
         }
 
         assertEquals(HttpStatusCode.OK, resp.status)
         val allowOrigin = resp.headers[HttpHeaders.AccessControlAllowOrigin]
         assertNotNull(allowOrigin)
-        assertEquals("http://localhost:3000", allowOrigin)
+        assertEquals("http://localhost:5173", allowOrigin)
     }
 
     @Test
@@ -52,7 +52,7 @@ private fun ApplicationTestBuilder.configureCorsTestApplication() {
             baseConfig
                 .withValue("mdm.profile", ConfigValueFactory.fromAnyRef("integration-test"))
                 .withValue("mdm.auth.sessionTtlMinutes", ConfigValueFactory.fromAnyRef("43200"))
-                .withValue("mdm.cors.allowedHosts", ConfigValueFactory.fromIterable(listOf("localhost:3000")))
+                .withValue("mdm.cors.allowedOrigins", ConfigValueFactory.fromIterable(listOf("http://localhost:5173")))
                 .withValue(
                     "mdm.db.jdbcUrl",
                     ConfigValueFactory.fromAnyRef(
