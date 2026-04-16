@@ -36,6 +36,7 @@ dependencies {
 
     // Security
     implementation("org.mindrot:jbcrypt:0.4")
+    implementation("com.google.auth:google-auth-library-oauth2-http:1.40.0")
 
     // Logging
     implementation("ch.qos.logback:logback-classic:1.5.18")

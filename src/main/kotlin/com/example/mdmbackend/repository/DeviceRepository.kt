@@ -19,6 +19,7 @@ import org.jetbrains.exposed.sql.count
 import org.jetbrains.exposed.sql.deleteWhere
 import org.jetbrains.exposed.sql.insert
 import org.jetbrains.exposed.sql.leftJoin
+import org.jetbrains.exposed.sql.select
 import org.jetbrains.exposed.sql.selectAll
 import org.jetbrains.exposed.sql.transactions.transaction
 import org.jetbrains.exposed.sql.update
@@ -67,8 +68,17 @@ data class DeviceRecord(
     val policyApplyError: String?,
     val policyApplyErrorCode: String?,
     val lastPolicyAppliedAt: Instant?,
+    val fcmToken: String?,
+    val fcmTokenUpdatedAt: Instant?,
     val status: String,
     val lastSeenAt: Instant,
+)
+
+data class DeviceWakeupTarget(
+    val deviceId: UUID,
+    val deviceCode: String,
+    val fcmToken: String,
+    val fcmTokenUpdatedAt: Instant?,
 )
 
 data class EventRecord(
@@ -286,6 +296,42 @@ class DeviceRepository {
         }
         if (updated == 0) return@transaction null
         findByDeviceCode(deviceCode)
+    }
+
+    fun upsertFcmToken(
+        deviceCode: String,
+        fcmToken: String,
+        updatedAt: Instant,
+    ): DeviceRecord? = transaction {
+        val updated = DevicesTable.update({ DevicesTable.deviceCode eq deviceCode }) {
+            it[DevicesTable.fcmToken] = fcmToken
+            it[DevicesTable.fcmTokenUpdatedAt] = updatedAt
+            it[DevicesTable.lastSeenAt] = Instant.now()
+        }
+        if (updated == 0) return@transaction null
+        findByDeviceCode(deviceCode)
+    }
+
+    fun findWakeupTargetByDeviceId(deviceId: UUID): DeviceWakeupTarget? = transaction {
+        DevicesTable
+            .select(
+                DevicesTable.id,
+                DevicesTable.deviceCode,
+                DevicesTable.fcmToken,
+                DevicesTable.fcmTokenUpdatedAt,
+            )
+            .where { DevicesTable.id eq EntityID(deviceId, DevicesTable) }
+            .limit(1)
+            .mapNotNull { row ->
+                val token = row.getOrNull(DevicesTable.fcmToken)?.trim()?.takeIf { it.isNotEmpty() } ?: return@mapNotNull null
+                DeviceWakeupTarget(
+                    deviceId = row[DevicesTable.id].value,
+                    deviceCode = row[DevicesTable.deviceCode],
+                    fcmToken = token,
+                    fcmTokenUpdatedAt = row.getOrNull(DevicesTable.fcmTokenUpdatedAt),
+                )
+            }
+            .firstOrNull()
     }
 
     fun upsertInstalledAppsInventory(
@@ -668,6 +714,8 @@ class DeviceRepository {
             policyApplyError = row.getOrNull(DevicesTable.policyApplyError),
             policyApplyErrorCode = row.getOrNull(DevicesTable.policyApplyErrorCode),
             lastPolicyAppliedAt = row.getOrNull(DevicesTable.lastPolicyAppliedAt),
+            fcmToken = row.getOrNull(DevicesTable.fcmToken),
+            fcmTokenUpdatedAt = row.getOrNull(DevicesTable.fcmTokenUpdatedAt),
             status = row[DevicesTable.status].name,
             lastSeenAt = row[DevicesTable.lastSeenAt],
         )

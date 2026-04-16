@@ -5,6 +5,8 @@ import com.example.mdmbackend.dto.DeviceAckCommandRequest
 import com.example.mdmbackend.dto.DeviceAckCommandResponse
 import com.example.mdmbackend.dto.DeviceAppInventoryReportRequest
 import com.example.mdmbackend.dto.DeviceEventRequest
+import com.example.mdmbackend.dto.DeviceFcmTokenUpsertRequest
+import com.example.mdmbackend.dto.DeviceFcmTokenUpsertResponse
 import com.example.mdmbackend.dto.DevicePolicyStateReportRequest
 import com.example.mdmbackend.dto.DevicePolicyStateResponse
 import com.example.mdmbackend.dto.DevicePollCommandsRequest
@@ -41,9 +43,12 @@ import io.ktor.server.routing.Route
 import io.ktor.server.routing.get
 import io.ktor.server.routing.post
 import io.ktor.server.routing.route
+import org.slf4j.LoggerFactory
+import java.time.Instant
 import java.util.UUID
 
 fun Route.deviceRoutes(cfg: AppConfig) {
+    val log = LoggerFactory.getLogger("DeviceRoutes")
     val deviceRepo = DeviceRepository()
     val profileRepo = ProfileRepository()
     val privateRepo = DevicePrivateInfoRepository()
@@ -299,6 +304,47 @@ fun Route.deviceRoutes(cfg: AppConfig) {
                 ) ?: throw HttpException(HttpStatusCode.NotFound, "Device not found")
 
                 call.respond(resp)
+            }
+
+            post("/fcm-token") {
+                val principal = call.principal<UserPrincipal>()!!
+                if (principal.role != Role.DEVICE) {
+                    call.respond(HttpStatusCode.Forbidden, mapOf("error" to "Forbidden"))
+                    return@post
+                }
+
+                val req = call.receive<DeviceFcmTokenUpsertRequest>()
+                requireDeviceCodeMatchIfDevice(principal, req.deviceCode)
+
+                val token = req.fcmToken.trim()
+                if (token.isEmpty()) {
+                    throw HttpException(HttpStatusCode.BadRequest, "Invalid field 'fcmToken': must be non-blank")
+                }
+
+                if (req.updatedAtEpochMillis <= 0L) {
+                    throw HttpException(HttpStatusCode.BadRequest, "Invalid field 'updatedAtEpochMillis': must be > 0")
+                }
+
+                val updatedAt = Instant.ofEpochMilli(req.updatedAtEpochMillis)
+                val updated = deviceRepo.upsertFcmToken(
+                    deviceCode = req.deviceCode,
+                    fcmToken = token,
+                    updatedAt = updatedAt,
+                ) ?: throw HttpException(HttpStatusCode.NotFound, "Device not found")
+
+                log.info(
+                    "token upsert deviceCode={} appVersion={} updatedAtEpochMillis={}",
+                    updated.deviceCode,
+                    req.appVersion?.trim()?.ifEmpty { null } ?: "unknown",
+                    updatedAt.toEpochMilli(),
+                )
+
+                call.respond(
+                    DeviceFcmTokenUpsertResponse(
+                        ok = true,
+                        updatedAtEpochMillis = updated.fcmTokenUpdatedAt?.toEpochMilli() ?: updatedAt.toEpochMilli(),
+                    )
+                )
             }
 
             post("/{deviceCode}/events") {

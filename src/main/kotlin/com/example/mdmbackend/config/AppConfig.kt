@@ -10,6 +10,7 @@ data class AppConfig(
     val cors: CorsConfig,
     val rateLimit: RateLimitConfig,
     val telemetry: TelemetryConfig,
+    val fcm: FcmConfig,
 ) {
     data class AuthConfig(
         val sessionTtlMinutes: Long,
@@ -50,6 +51,11 @@ data class AppConfig(
     data class TelemetryConfig(
         val eventRetentionDays: Long,
         val usageRetentionDays: Long,
+    )
+
+    data class FcmConfig(
+        val enabled: Boolean,
+        val credentialsFile: String,
     )
 
     companion object {
@@ -115,6 +121,12 @@ data class AppConfig(
                 telemetry = TelemetryConfig(
                     eventRetentionDays = root.propertyOrNull("telemetry.eventRetentionDays")?.getString()?.toLong() ?: 30L,
                     usageRetentionDays = root.propertyOrNull("telemetry.usageRetentionDays")?.getString()?.toLong() ?: 30L,
+                ),
+                fcm = FcmConfig(
+                    enabled = readProfileBoolean(root, profile, "fcm.enabled") ?: false,
+                    credentialsFile = readProfileRaw(root, profile, "fcm.credentialsFile")
+                        ?.trim()
+                        .orEmpty(),
                 ),
             )
         }
@@ -246,7 +258,7 @@ data class AppConfig(
             profile: String,
             path: String,
         ): String? =
-            root.propertyOrNull(path)?.getString()
-                ?: root.propertyOrNull("profiles.$profile.$path")?.getString()
+            root.propertyOrNull("profiles.$profile.$path")?.getString()
+                ?: root.propertyOrNull(path)?.getString()
     }
 }

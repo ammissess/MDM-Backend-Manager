@@ -96,6 +96,8 @@ object DevicesTable : UUIDTable("devices") {
     val policyApplyError = varchar("policy_apply_error", 2048).nullable()
     val policyApplyErrorCode = varchar("policy_apply_error_code", 64).nullable()
     val lastPolicyAppliedAt = timestamp("last_policy_applied_at").nullable()
+    val fcmToken = varchar("fcm_token", 4096).nullable()
+    val fcmTokenUpdatedAt = timestamp("fcm_token_updated_at").nullable()
 
     val createdAt = timestamp("created_at").clientDefault { Instant.now() }
     val lastSeenAt = timestamp("last_seen_at").clientDefault { Instant.now() }

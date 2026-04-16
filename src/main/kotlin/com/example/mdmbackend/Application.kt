@@ -11,7 +11,10 @@ import com.example.mdmbackend.middleware.configureSerialization
 import com.example.mdmbackend.routes.registerRoutes
 import com.example.mdmbackend.service.AuditService
 import com.example.mdmbackend.service.EventBusHolder
+import com.example.mdmbackend.service.FcmHttpV1WakeupSender
+import com.example.mdmbackend.service.FcmWakeupService
 import com.example.mdmbackend.service.TelemetryRetentionService
+import com.example.mdmbackend.repository.DeviceRepository
 import io.ktor.server.application.*
 import io.ktor.server.response.*
 import io.ktor.server.routing.*
@@ -37,6 +40,10 @@ fun Application.module() {
 
     // Register audit subscribers once at startup
     AuditService().registerEventSubscribers(EventBusHolder.bus)
+    FcmWakeupService(
+        devices = DeviceRepository(),
+        sender = FcmHttpV1WakeupSender(cfg.fcm),
+    ).register(EventBusHolder.bus)
 
     // Lightweight retention pass at startup, without introducing scheduler complexity.
     val cleanup = TelemetryRetentionService.fromConfig(cfg).runCleanup()
