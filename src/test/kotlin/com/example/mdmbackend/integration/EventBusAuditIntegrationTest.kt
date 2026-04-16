@@ -1,10 +1,12 @@
 package com.example.mdmbackend.integration
-
-import com.example.mdmbackend.module
+import com.typesafe.config.ConfigFactory
+import com.typesafe.config.ConfigValueFactory
 import io.ktor.client.request.*
 import io.ktor.client.statement.*
 import io.ktor.http.*
 import io.ktor.serialization.kotlinx.json.json
+import io.ktor.server.config.HoconApplicationConfig
+import io.ktor.server.testing.ApplicationTestBuilder
 import io.ktor.server.testing.*
 import kotlin.test.Test
 import kotlin.test.assertEquals
@@ -14,7 +16,7 @@ class EventBusAuditIntegrationTest {
 
     @Test
     fun testCommandCreatedEvent_ProducesSingleAuditLog() = testApplication {
-        application { module() }
+        configureEventBusAuditTestApplication()
         val client = createClient {
             install(io.ktor.client.plugins.contentnegotiation.ContentNegotiation) { json() }
         }
@@ -46,14 +48,14 @@ class EventBusAuditIntegrationTest {
         val body = audit.bodyAsText()
         assertTrue(body.contains("CREATE_COMMAND"))
         assertTrue(body.contains(deviceId))
-        assertEquals(1, body.split("\"action\":\"CREATE_COMMAND\"").size - 1)
+        assertEquals(1, "\"action\"\\s*:\\s*\"CREATE_COMMAND\"".toRegex().findAll(body).count())
     }
 
     @Test
     fun testAuditSubscriberNotDuplicatedAcrossMultipleAppStartups() {
         repeat(3) {
             testApplication {
-                application { module() }
+                configureEventBusAuditTestApplication()
                 val client = createClient {
                     install(io.ktor.client.plugins.contentnegotiation.ContentNegotiation) { json() }
                 }
@@ -87,5 +89,25 @@ class EventBusAuditIntegrationTest {
                 assertEquals(1, body.split(deviceId).size - 1)
             }
         }
+    }
+}
+
+private fun ApplicationTestBuilder.configureEventBusAuditTestApplication() {
+    environment {
+        val dbName = "event_bus_audit_${System.nanoTime()}"
+        val baseConfig = ConfigFactory.load()
+        config = HoconApplicationConfig(
+            baseConfig
+                .withValue("mdm.auth.sessionTtlMinutes", ConfigValueFactory.fromAnyRef("43200"))
+                .withValue(
+                    "mdm.db.jdbcUrl",
+                    ConfigValueFactory.fromAnyRef(
+                        "jdbc:h2:mem:$dbName;MODE=MySQL;DATABASE_TO_LOWER=TRUE;DB_CLOSE_DELAY=-1;DB_CLOSE_ON_EXIT=FALSE"
+                    )
+                )
+                .withValue("mdm.db.driver", ConfigValueFactory.fromAnyRef("org.h2.Driver"))
+                .withValue("mdm.db.user", ConfigValueFactory.fromAnyRef("sa"))
+                .withValue("mdm.db.password", ConfigValueFactory.fromAnyRef(""))
+        )
     }
 }

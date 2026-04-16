@@ -1,21 +1,22 @@
 package com.example.mdmbackend.integration
-
-import com.example.mdmbackend.module
+import com.typesafe.config.ConfigFactory
+import com.typesafe.config.ConfigValueFactory
 import io.ktor.client.request.*
 import io.ktor.client.statement.*
 import io.ktor.http.*
 import io.ktor.serialization.kotlinx.json.json
+import io.ktor.server.config.HoconApplicationConfig
+import io.ktor.server.testing.ApplicationTestBuilder
 import io.ktor.server.testing.*
 import kotlin.test.Test
 import kotlin.test.assertEquals
-import kotlin.test.assertNotNull
 import kotlin.test.assertTrue
 
 class AuthIntegrationTest {
 
     @Test
     fun testAdminLoginSuccess() = testApplication {
-        application { module() }
+        configureAuthTestApplication()
         val client = createClient {
             install(io.ktor.client.plugins.contentnegotiation.ContentNegotiation) {
                 json()
@@ -31,13 +32,13 @@ class AuthIntegrationTest {
         val body = response.bodyAsText()
 
         assertTrue(body.contains("\"token\":"))
-        assertTrue(body.contains("\"role\":\"ADMIN\""))
+        assertEquals("ADMIN", TestJsonHelper.extractField(body, "role"))
         assertTrue(body.contains("\"expiresAtEpochMillis\":"))
     }
 
     @Test
     fun testDeviceLoginWithoutDeviceCode_ShouldFail() = testApplication {
-        application { module() }
+        configureAuthTestApplication()
         val client = createClient {
             install(io.ktor.client.plugins.contentnegotiation.ContentNegotiation) {
                 json()
@@ -57,7 +58,7 @@ class AuthIntegrationTest {
 
     @Test
     fun testDeviceLoginWithDeviceCode_Success() = testApplication {
-        application { module() }
+        configureAuthTestApplication()
         val client = createClient {
             install(io.ktor.client.plugins.contentnegotiation.ContentNegotiation) {
                 json()
@@ -73,12 +74,12 @@ class AuthIntegrationTest {
         val body = response.bodyAsText()
 
         assertTrue(body.contains("\"token\":"))
-        assertTrue(body.contains("\"role\":\"DEVICE\""))
+        assertEquals("DEVICE", TestJsonHelper.extractField(body, "role"))
     }
 
     @Test
     fun testLoginInvalidCredentials() = testApplication {
-        application { module() }
+        configureAuthTestApplication()
         val client = createClient {
             install(io.ktor.client.plugins.contentnegotiation.ContentNegotiation) {
                 json()
@@ -93,5 +94,25 @@ class AuthIntegrationTest {
         assertEquals(HttpStatusCode.Unauthorized, response.status)
         val body = response.bodyAsText()
         assertTrue(body.contains("Invalid credentials"))
+    }
+}
+
+private fun ApplicationTestBuilder.configureAuthTestApplication() {
+    environment {
+        val dbName = "auth_integration_${System.nanoTime()}"
+        val baseConfig = ConfigFactory.load()
+        config = HoconApplicationConfig(
+            baseConfig
+                .withValue("mdm.auth.sessionTtlMinutes", ConfigValueFactory.fromAnyRef("43200"))
+                .withValue(
+                    "mdm.db.jdbcUrl",
+                    ConfigValueFactory.fromAnyRef(
+                        "jdbc:h2:mem:$dbName;MODE=MySQL;DATABASE_TO_LOWER=TRUE;DB_CLOSE_DELAY=-1;DB_CLOSE_ON_EXIT=FALSE"
+                    )
+                )
+                .withValue("mdm.db.driver", ConfigValueFactory.fromAnyRef("org.h2.Driver"))
+                .withValue("mdm.db.user", ConfigValueFactory.fromAnyRef("sa"))
+                .withValue("mdm.db.password", ConfigValueFactory.fromAnyRef(""))
+        )
     }
 }

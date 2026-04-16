@@ -1,11 +1,13 @@
 package com.example.mdmbackend.integration
 
-import com.example.mdmbackend.module
+import com.typesafe.config.ConfigFactory
+import com.typesafe.config.ConfigValueFactory
 import io.ktor.client.request.get
 import io.ktor.client.request.header
 import io.ktor.http.HttpHeaders
 import io.ktor.http.HttpStatusCode
-import io.ktor.server.config.MapApplicationConfig
+import io.ktor.server.config.HoconApplicationConfig
+import io.ktor.server.testing.ApplicationTestBuilder
 import io.ktor.server.testing.testApplication
 import kotlin.test.Test
 import kotlin.test.assertEquals
@@ -16,32 +18,7 @@ class CorsIntegrationTest {
 
     @Test
     fun testCors_AllowedOrigin_ShouldReturnAllowOriginHeader() = testApplication {
-        environment {
-            config = MapApplicationConfig(
-                "ktor.deployment.port" to "8080",
-                "ktor.application.modules.0" to "com.example.mdmbackend.ApplicationKt.module",
-
-                "mdm.auth.sessionTtlMinutes" to "43200",
-
-                "mdm.seed.adminUser" to "admin",
-                "mdm.seed.adminPass" to "admin123",
-                "mdm.seed.deviceUser" to "device",
-                "mdm.seed.devicePass" to "device123",
-                "mdm.seed.defaultDeviceUnlockPass" to "1111",
-                "mdm.seed.defaultUserCode" to "TEST002",
-                "mdm.seed.defaultAllowedApps.0" to "com.android.settings",
-                "mdm.seed.defaultAllowedApps.1" to "com.android.chrome",
-
-                "mdm.db.jdbcUrl" to "jdbc:mysql://localhost:3306/mdmappbasic?useUnicode=true&characterEncoding=utf8&useSSL=false&serverTimezone=UTC&allowPublicKeyRetrieval=true",
-                "mdm.db.driver" to "com.mysql.cj.jdbc.Driver",
-                "mdm.db.user" to "mdm",
-                "mdm.db.password" to "mdm123",
-
-                "mdm.cors.allowedHosts.0" to "localhost:3000"
-            )
-        }
-
-        application { module() }
+        configureCorsTestApplication()
 
         val resp = client.get("/health") {
             header(HttpHeaders.Origin, "http://localhost:3000")
@@ -55,39 +32,36 @@ class CorsIntegrationTest {
 
     @Test
     fun testCors_DisallowedOrigin_ShouldNotReturnAllowOriginHeader() = testApplication {
-        environment {
-            config = MapApplicationConfig(
-                "ktor.deployment.port" to "8080",
-                "ktor.application.modules.0" to "com.example.mdmbackend.ApplicationKt.module",
-
-                "mdm.auth.sessionTtlMinutes" to "43200",
-
-                "mdm.seed.adminUser" to "admin",
-                "mdm.seed.adminPass" to "admin123",
-                "mdm.seed.deviceUser" to "device",
-                "mdm.seed.devicePass" to "device123",
-                "mdm.seed.defaultDeviceUnlockPass" to "1111",
-                "mdm.seed.defaultUserCode" to "TEST002",
-                "mdm.seed.defaultAllowedApps.0" to "com.android.settings",
-                "mdm.seed.defaultAllowedApps.1" to "com.android.chrome",
-
-                "mdm.db.jdbcUrl" to "jdbc:mysql://localhost:3306/mdmappbasic?useUnicode=true&characterEncoding=utf8&useSSL=false&serverTimezone=UTC&allowPublicKeyRetrieval=true",
-                "mdm.db.driver" to "com.mysql.cj.jdbc.Driver",
-                "mdm.db.user" to "mdm",
-                "mdm.db.password" to "mdm123",
-
-                "mdm.cors.allowedHosts.0" to "localhost:3000"
-            )
-        }
-
-        application { module() }
+        configureCorsTestApplication()
 
         val resp = client.get("/health") {
             header(HttpHeaders.Origin, "http://evil.local:9999")
         }
 
-        assertEquals(HttpStatusCode.OK, resp.status)
+        assertEquals(HttpStatusCode.Forbidden, resp.status)
         val allowOrigin = resp.headers[HttpHeaders.AccessControlAllowOrigin]
         assertNull(allowOrigin)
+    }
+}
+
+private fun ApplicationTestBuilder.configureCorsTestApplication() {
+    environment {
+        val dbName = "cors_integration_${System.nanoTime()}"
+        val baseConfig = ConfigFactory.load()
+        config = HoconApplicationConfig(
+            baseConfig
+                .withValue("mdm.profile", ConfigValueFactory.fromAnyRef("integration-test"))
+                .withValue("mdm.auth.sessionTtlMinutes", ConfigValueFactory.fromAnyRef("43200"))
+                .withValue("mdm.cors.allowedHosts", ConfigValueFactory.fromIterable(listOf("localhost:3000")))
+                .withValue(
+                    "mdm.db.jdbcUrl",
+                    ConfigValueFactory.fromAnyRef(
+                        "jdbc:h2:mem:$dbName;MODE=MySQL;DATABASE_TO_LOWER=TRUE;DB_CLOSE_DELAY=-1;DB_CLOSE_ON_EXIT=FALSE"
+                    )
+                )
+                .withValue("mdm.db.driver", ConfigValueFactory.fromAnyRef("org.h2.Driver"))
+                .withValue("mdm.db.user", ConfigValueFactory.fromAnyRef("sa"))
+                .withValue("mdm.db.password", ConfigValueFactory.fromAnyRef(""))
+        )
     }
 }
