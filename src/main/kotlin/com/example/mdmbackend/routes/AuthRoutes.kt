@@ -31,11 +31,12 @@ fun Route.authRoutes(cfg: AppConfig) {
             val actorType = if (result.role == "ADMIN") "ADMIN" else "DEVICE"
             audit.log(
                 actorType = actorType,
+                actorUserId = result.userId,
                 actorDeviceCode = result.deviceCode,
-                action = "LOGIN",
+                action = AuditService.ACTION_LOGIN,
                 targetType = "SESSION",
                 targetId = result.token.toString(),
-                payloadJson = """{"username":"${req.username}","role":"${result.role}"}"""
+                payloadJson = """{"username":"${req.username}","role":"${result.role}","outcome":"SUCCESS"}"""
             )
 
             call.respond(
@@ -63,10 +64,10 @@ fun Route.authRoutes(cfg: AppConfig) {
                     actorType = principal.role.name,
                     actorUserId = principal.userId,
                     actorDeviceCode = principal.deviceCode,
-                    action = "LOGOUT",
+                    action = AuditService.ACTION_LOGOUT,
                     targetType = "SESSION",
                     targetId = token,
-                    payloadJson = """{"ok":$ok,"username":"${principal.username}"}"""
+                    payloadJson = """{"ok":$ok,"username":"${principal.username}","outcome":"${if (ok) "SUCCESS" else "FAILED"}"}"""
                 )
 
                 call.respond(mapOf("ok" to ok, "user" to principal.username))

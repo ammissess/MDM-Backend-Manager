@@ -71,13 +71,13 @@ class AdminDeviceService(
             eventCountByCategory = devices.countEventsByCategory(id).map { AggregateCountItem(it.key, it.count) },
             eventCountBySeverity = devices.countEventsBySeverity(id).map { AggregateCountItem(it.key, it.count) },
             policyApplyFailed24h = auditRepo.countByActionAndTarget(
-                action = "POLICY_APPLY_REPORTED_FAILED",
+                action = AuditService.ACTION_POLICY_APPLY_FAILED,
                 targetType = "DEVICE",
                 targetId = device.deviceCode,
                 from = now.minusSeconds(24 * 60 * 60),
             ),
             policyApplyFailed7d = auditRepo.countByActionAndTarget(
-                action = "POLICY_APPLY_REPORTED_FAILED",
+                action = AuditService.ACTION_POLICY_APPLY_FAILED,
                 targetType = "DEVICE",
                 targetId = device.deviceCode,
                 from = now.minusSeconds(7 * 24 * 60 * 60),
@@ -179,11 +179,36 @@ class AdminDeviceService(
         return after.toDeviceResponse()
     }
 
-    fun lockDevice(id: UUID): Boolean = devices.lockDevice(id)
+    fun lockDevice(id: UUID, actorUserId: UUID): Boolean {
+        val device = devices.findById(id) ?: return false
+        if (!devices.lockDevice(id)) return false
 
-    fun resetUnlockPass(id: UUID, newPassword: String): Boolean {
+        eventBus.publish(
+            DeviceLockedEvent(
+                deviceId = id,
+                deviceCode = device.deviceCode,
+                previousStatus = device.status,
+                actorUserId = actorUserId,
+            )
+        )
+
+        return true
+    }
+
+    fun resetUnlockPass(id: UUID, newPassword: String, actorUserId: UUID): Boolean {
+        val device = devices.findById(id) ?: return false
         val hash = PasswordHasher.hash(newPassword)
-        return devices.resetUnlockPass(id, hash)
+        if (!devices.resetUnlockPass(id, hash)) return false
+
+        eventBus.publish(
+            DeviceUnlockPasswordResetEvent(
+                deviceId = id,
+                deviceCode = device.deviceCode,
+                actorUserId = actorUserId,
+            )
+        )
+
+        return true
     }
 
     private fun com.example.mdmbackend.repository.DeviceRecord.toDeviceResponse(): DeviceResponse =

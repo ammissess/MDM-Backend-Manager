@@ -27,6 +27,21 @@ data class DeviceUnlockedEvent(
     override val occurredAt: Instant = Instant.now(),
 ) : DomainEvent
 
+data class DeviceLockedEvent(
+    val deviceId: UUID,
+    val deviceCode: String,
+    val previousStatus: String,
+    val actorUserId: UUID,
+    override val occurredAt: Instant = Instant.now(),
+) : DomainEvent
+
+data class DeviceUnlockPasswordResetEvent(
+    val deviceId: UUID,
+    val deviceCode: String,
+    val actorUserId: UUID,
+    override val occurredAt: Instant = Instant.now(),
+) : DomainEvent
+
 data class ProfileLinkedEvent(
     val deviceId: UUID,
     val userCode: String?,
@@ -48,6 +63,41 @@ data class CommandExpiredEvent(
     val deviceId: UUID,
     val type: String,
     val expiresAtEpochMillis: Long?,
+    override val occurredAt: Instant = Instant.now(),
+) : DomainEvent
+
+data class CommandCancelledEvent(
+    val commandId: UUID,
+    val deviceId: UUID,
+    val type: String,
+    val reason: String,
+    val errorCode: String?,
+    val actorUserId: UUID,
+    override val occurredAt: Instant = Instant.now(),
+) : DomainEvent
+
+data class CommandAckFailedEvent(
+    val commandId: UUID,
+    val deviceId: UUID,
+    val deviceCode: String,
+    val type: String,
+    val actorUserId: UUID?,
+    val error: String?,
+    val errorCode: String?,
+    val output: String?,
+    override val occurredAt: Instant = Instant.now(),
+) : DomainEvent
+
+data class PolicyAppliedEvent(
+    val deviceCode: String,
+    val status: String,
+    val actorType: String,
+    val actorUserId: UUID?,
+    val appliedConfigVersionEpochMillis: Long?,
+    val appliedConfigHash: String?,
+    val policyAppliedAtEpochMillis: Long?,
+    val error: String?,
+    val errorCode: String?,
     override val occurredAt: Instant = Instant.now(),
 ) : DomainEvent
 

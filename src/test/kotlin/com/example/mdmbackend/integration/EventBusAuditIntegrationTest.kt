@@ -52,6 +52,71 @@ class EventBusAuditIntegrationTest {
     }
 
     @Test
+    fun testCommandAckFailedEvent_ProducesSingleAuditLog() = testApplication {
+        configureEventBusAuditTestApplication()
+        val client = createClient {
+            install(io.ktor.client.plugins.contentnegotiation.ContentNegotiation) { json() }
+        }
+
+        val adminToken = TestAuthHelper.loginAdmin(client)
+        val deviceCode = "TEST_EVTBUS_ACK_FAILED_001"
+        val deviceToken = TestAuthHelper.loginDevice(client, deviceCode)
+
+        val registerResp = client.post("/api/device/register") {
+            contentType(ContentType.Application.Json)
+            header("Authorization", "Bearer $deviceToken")
+            setBody("""{"deviceCode":"$deviceCode"}""")
+        }
+        assertEquals(HttpStatusCode.OK, registerResp.status)
+        val deviceId = TestJsonHelper.extractField(registerResp.bodyAsText(), "deviceId")
+
+        val createResp = client.post("/api/admin/devices/$deviceId/commands") {
+            contentType(ContentType.Application.Json)
+            header("Authorization", "Bearer $adminToken")
+            setBody("""{"type":"lock_screen","payload":"{}","ttlSeconds":120}""")
+        }
+        assertEquals(HttpStatusCode.Created, createResp.status)
+
+        val pollResp = client.post("/api/device/poll") {
+            contentType(ContentType.Application.Json)
+            header("Authorization", "Bearer $deviceToken")
+            setBody("""{"deviceCode":"$deviceCode","limit":1}""")
+        }
+        assertEquals(HttpStatusCode.OK, pollResp.status)
+        val pollBody = pollResp.bodyAsText()
+        val commandId = TestJsonHelper.extractField(pollBody, "id")
+        val leaseToken = TestJsonHelper.extractField(pollBody, "leaseToken")
+
+        val ackResp = client.post("/api/device/ack") {
+            contentType(ContentType.Application.Json)
+            header("Authorization", "Bearer $deviceToken")
+            setBody(
+                """
+                {
+                  "deviceCode":"$deviceCode",
+                  "commandId":"$commandId",
+                  "leaseToken":"$leaseToken",
+                  "result":"FAILED",
+                  "error":"Subscriber failure",
+                  "errorCode":"ACK_FAILED"
+                }
+                """.trimIndent()
+            )
+        }
+        assertEquals(HttpStatusCode.OK, ackResp.status)
+
+        val audit = client.get("/api/admin/audit?action=COMMAND_ACK_FAILED&targetType=COMMAND&targetId=$commandId&limit=20&offset=0") {
+            header("Authorization", "Bearer $adminToken")
+        }
+        assertEquals(HttpStatusCode.OK, audit.status)
+
+        val body = audit.bodyAsText()
+        assertTrue(body.contains("COMMAND_ACK_FAILED"))
+        assertTrue(body.contains(deviceCode))
+        assertEquals(1, "\"action\"\\s*:\\s*\"COMMAND_ACK_FAILED\"".toRegex().findAll(body).count())
+    }
+
+    @Test
     fun testAuditSubscriberNotDuplicatedAcrossMultipleAppStartups() {
         repeat(3) {
             testApplication {

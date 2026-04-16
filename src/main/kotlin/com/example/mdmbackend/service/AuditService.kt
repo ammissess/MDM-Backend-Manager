@@ -4,6 +4,7 @@ import com.example.mdmbackend.dto.AuditLogItem
 import com.example.mdmbackend.dto.AuditLogListResponse
 import com.example.mdmbackend.dto.AdminAuditFilter
 import com.example.mdmbackend.repository.AuditRepository
+import java.time.Instant
 import java.util.UUID
 import java.util.concurrent.atomic.AtomicBoolean
 
@@ -13,9 +14,19 @@ class AuditService(
 
     companion object {
         private val subscribersRegistered = AtomicBoolean(false)
+        const val ACTION_LOGIN = "LOGIN"
+        const val ACTION_LOGOUT = "LOGOUT"
+        const val ACTION_LOCK = "LOCK"
+        const val ACTION_UNLOCK = "UNLOCK"
+        const val ACTION_RESET_UNLOCK_PASSWORD = "RESET_UNLOCK_PASSWORD"
+        const val ACTION_CREATE_COMMAND = "CREATE_COMMAND"
+        const val ACTION_COMMAND_CANCELLED = "COMMAND_CANCELLED"
         const val ACTION_POLICY_DESIRED_CHANGED = "POLICY_DESIRED_CHANGED"
         const val ACTION_POLICY_REFRESH_ENQUEUED = "POLICY_REFRESH_ENQUEUED"
         const val ACTION_COMMAND_EXPIRED = "COMMAND_EXPIRED"
+        const val ACTION_COMMAND_ACK_FAILED = "COMMAND_ACK_FAILED"
+        const val ACTION_POLICY_APPLY_SUCCESS = "POLICY_APPLY_SUCCESS"
+        const val ACTION_POLICY_APPLY_FAILED = "POLICY_APPLY_FAILED"
     }
 
     fun registerEventSubscribers(bus: EventBus) {
@@ -31,7 +42,8 @@ class AuditService(
                         action = "DEVICE_REGISTERED",
                         targetType = "DEVICE",
                         targetId = event.deviceId.toString(),
-                        payloadJson = """{"deviceCode":"${event.deviceCode}","status":"${event.status}"}"""
+                        payloadJson = """{"deviceCode":"${event.deviceCode}","status":"${event.status}","outcome":"SUCCESS"}""",
+                        createdAt = event.occurredAt,
                     )
                 }
 
@@ -40,10 +52,35 @@ class AuditService(
                         actorType = event.actorType,
                         actorUserId = event.actorUserId,
                         actorDeviceCode = event.actorDeviceCode,
-                        action = "UNLOCK_DEVICE",
+                        action = ACTION_UNLOCK,
                         targetType = "DEVICE",
                         targetId = event.deviceCode,
-                        payloadJson = """{"status":"${event.status}"}"""
+                        payloadJson = """{"status":"${event.status}","outcome":"SUCCESS"}""",
+                        createdAt = event.occurredAt,
+                    )
+                }
+
+                is DeviceLockedEvent -> {
+                    log(
+                        actorType = "ADMIN",
+                        actorUserId = event.actorUserId,
+                        action = ACTION_LOCK,
+                        targetType = "DEVICE",
+                        targetId = event.deviceId.toString(),
+                        payloadJson = """{"deviceCode":"${event.deviceCode}","previousStatus":"${event.previousStatus}","outcome":"SUCCESS"}""",
+                        createdAt = event.occurredAt,
+                    )
+                }
+
+                is DeviceUnlockPasswordResetEvent -> {
+                    log(
+                        actorType = "ADMIN",
+                        actorUserId = event.actorUserId,
+                        action = ACTION_RESET_UNLOCK_PASSWORD,
+                        targetType = "DEVICE",
+                        targetId = event.deviceId.toString(),
+                        payloadJson = """{"deviceCode":"${event.deviceCode}","outcome":"SUCCESS"}""",
+                        createdAt = event.occurredAt,
                     )
                 }
 
@@ -54,7 +91,8 @@ class AuditService(
                         action = "LINK_PROFILE",
                         targetType = "DEVICE",
                         targetId = event.deviceId.toString(),
-                        payloadJson = """{"userCode":${event.userCode?.let { "\"$it\"" } ?: "null"}}"""
+                        payloadJson = """{"userCode":${event.userCode?.let { "\"$it\"" } ?: "null"},"outcome":"SUCCESS"}""",
+                        createdAt = event.occurredAt,
                     )
                 }
 
@@ -62,10 +100,11 @@ class AuditService(
                     log(
                         actorType = "ADMIN",
                         actorUserId = event.actorUserId,
-                        action = "CREATE_COMMAND",
+                        action = ACTION_CREATE_COMMAND,
                         targetType = "COMMAND",
                         targetId = event.commandId.toString(),
-                        payloadJson = """{"deviceId":"${event.deviceId}","type":"${event.type}","ttlSeconds":${event.ttlSeconds}}"""
+                        payloadJson = """{"deviceId":"${event.deviceId}","type":"${event.type}","ttlSeconds":${event.ttlSeconds},"status":"PENDING","outcome":"SUCCESS"}""",
+                        createdAt = event.occurredAt,
                     )
                 }
 
@@ -75,25 +114,67 @@ class AuditService(
                         action = ACTION_COMMAND_EXPIRED,
                         targetType = "COMMAND",
                         targetId = event.commandId.toString(),
-                        payloadJson = """{"deviceId":"${event.deviceId}","type":"${event.type}","expiresAtEpochMillis":${event.expiresAtEpochMillis?.toString() ?: "null"}}"""
+                        payloadJson = """{"deviceId":"${event.deviceId}","type":"${event.type}","status":"EXPIRED","outcome":"EXPIRED","expiresAtEpochMillis":${event.expiresAtEpochMillis?.toString() ?: "null"}}""",
+                        createdAt = event.occurredAt,
                     )
                 }
 
-                is TelemetryReceivedEvent -> {
-                    val action = when (event.telemetryType) {
-                        "policy_apply_reported_success" -> "POLICY_APPLY_REPORTED_SUCCESS"
-                        "policy_apply_reported_failed" -> "POLICY_APPLY_REPORTED_FAILED"
-                        else -> "TELEMETRY_RECEIVED"
-                    }
+                is CommandCancelledEvent -> {
+                    log(
+                        actorType = "ADMIN",
+                        actorUserId = event.actorUserId,
+                        action = ACTION_COMMAND_CANCELLED,
+                        targetType = "COMMAND",
+                        targetId = event.commandId.toString(),
+                        payloadJson = """{"deviceId":"${event.deviceId}","type":"${event.type}","reason":"${event.reason}","errorCode":${event.errorCode?.let { "\"$it\"" } ?: "null"},"status":"CANCELLED","outcome":"CANCELLED"}""",
+                        createdAt = event.occurredAt,
+                    )
+                }
 
+                is CommandAckFailedEvent -> {
+                    log(
+                        actorType = "DEVICE",
+                        actorUserId = event.actorUserId,
+                        actorDeviceCode = event.deviceCode,
+                        action = ACTION_COMMAND_ACK_FAILED,
+                        targetType = "COMMAND",
+                        targetId = event.commandId.toString(),
+                        payloadJson = """{"deviceId":"${event.deviceId}","deviceCode":"${event.deviceCode}","type":"${event.type}","error":${event.error?.let { "\"$it\"" } ?: "null"},"errorCode":${event.errorCode?.let { "\"$it\"" } ?: "null"},"output":${event.output?.let { "\"$it\"" } ?: "null"},"status":"FAILED","outcome":"FAILED"}""",
+                        createdAt = event.occurredAt,
+                    )
+                }
+
+                is PolicyAppliedEvent -> {
                     log(
                         actorType = event.actorType,
                         actorUserId = event.actorUserId,
                         actorDeviceCode = event.deviceCode,
-                        action = action,
+                        action = if (event.status == "SUCCESS") ACTION_POLICY_APPLY_SUCCESS else ACTION_POLICY_APPLY_FAILED,
                         targetType = "DEVICE",
                         targetId = event.deviceCode,
-                        payloadJson = """{"telemetryType":"${event.telemetryType}"}"""
+                        payloadJson = "{" +
+                            "\"status\":\"${event.status}\"," +
+                            "\"outcome\":\"${event.status}\"," +
+                            "\"appliedConfigVersionEpochMillis\":${event.appliedConfigVersionEpochMillis?.toString() ?: "null"}," +
+                            "\"appliedConfigHash\":${event.appliedConfigHash?.let { "\"$it\"" } ?: "null"}," +
+                            "\"policyAppliedAtEpochMillis\":${event.policyAppliedAtEpochMillis?.toString() ?: "null"}," +
+                            "\"error\":${event.error?.let { "\"$it\"" } ?: "null"}," +
+                            "\"errorCode\":${event.errorCode?.let { "\"$it\"" } ?: "null"}" +
+                            "}",
+                        createdAt = event.occurredAt,
+                    )
+                }
+
+                is TelemetryReceivedEvent -> {
+                    log(
+                        actorType = event.actorType,
+                        actorUserId = event.actorUserId,
+                        actorDeviceCode = event.deviceCode,
+                        action = "TELEMETRY_RECEIVED",
+                        targetType = "DEVICE",
+                        targetId = event.deviceCode,
+                        payloadJson = """{"telemetryType":"${event.telemetryType}","outcome":"RECEIVED"}""",
+                        createdAt = event.occurredAt,
                     )
                 }
             }
@@ -108,6 +189,7 @@ class AuditService(
         targetType: String? = null,
         targetId: String? = null,
         payloadJson: String? = null,
+        createdAt: Instant = Instant.now(),
     ) {
         repo.create(
             actorType = actorType,
@@ -116,7 +198,8 @@ class AuditService(
             action = action,
             targetType = targetType,
             targetId = targetId,
-            payloadJson = payloadJson
+            payloadJson = payloadJson,
+            createdAt = createdAt,
         )
     }
 

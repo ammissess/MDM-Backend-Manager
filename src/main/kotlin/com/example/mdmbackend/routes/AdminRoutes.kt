@@ -217,16 +217,7 @@ fun Route.adminRoutes() {
                     val id = runCatching { UUID.fromString(call.parameters["id"]!!) }
                         .getOrElse { throw HttpException(HttpStatusCode.BadRequest, "Invalid UUID format: ${call.parameters["id"]}") }
 
-                    if (!devices.lockDevice(id)) throw HttpException(HttpStatusCode.NotFound, "Device not found")
-
-                    audit.log(
-                        actorType = "ADMIN",
-                        actorUserId = principal.userId,
-                        action = "LOCK_DEVICE",
-                        targetType = "DEVICE",
-                        targetId = id.toString(),
-                        payloadJson = """{"ok":true}"""
-                    )
+                    if (!devices.lockDevice(id, principal.userId)) throw HttpException(HttpStatusCode.NotFound, "Device not found")
 
                     call.respond(mapOf("ok" to true))
                 }
@@ -242,18 +233,9 @@ fun Route.adminRoutes() {
                         .getOrElse { throw HttpException(HttpStatusCode.BadRequest, "Invalid UUID format: ${call.parameters["id"]}") }
 
                     val req = call.receive<AdminResetUnlockPassRequest>()
-                    if (!devices.resetUnlockPass(id, req.newPassword)) {
+                    if (!devices.resetUnlockPass(id, req.newPassword, principal.userId)) {
                         throw HttpException(HttpStatusCode.NotFound, "Device not found")
                     }
-
-                    audit.log(
-                        actorType = "ADMIN",
-                        actorUserId = principal.userId,
-                        action = "RESET_UNLOCK_PASS",
-                        targetType = "DEVICE",
-                        targetId = id.toString(),
-                        payloadJson = """{"ok":true}"""
-                    )
 
                     call.respond(mapOf("ok" to true))
                 }
@@ -414,15 +396,6 @@ fun Route.adminRoutes() {
 
                         val req = call.receive<com.example.mdmbackend.dto.AdminCancelCommandRequest>()
                         val result = commandService.adminCancel(deviceId, commandId, principal.userId, req)
-
-                        audit.log(
-                            actorType = "ADMIN",
-                            actorUserId = principal.userId,
-                            action = "CANCEL_COMMAND",
-                            targetType = "COMMAND",
-                            targetId = commandId.toString(),
-                            payloadJson = """{"reason":"${req.reason}","errorCode":${req.errorCode?.let { "\"$it\"" } ?: "null"}}"""
-                        )
 
                         call.respond(result)
                     }

@@ -102,20 +102,13 @@ class AuditIntegrationTest {
     }
 
     @Test
-    fun testLinkProfileResetUnlockCreateCommand_AuditGenerated() = testApplication {
+    fun testLockResetUnlockAndCreateCommand_AuditGenerated() = testApplication {
         configureAuditTestApplication()
         val client = createClient {
             install(io.ktor.client.plugins.contentnegotiation.ContentNegotiation) { json() }
         }
 
         val adminToken = TestAuthHelper.loginAdmin(client)
-
-        val profileResp = client.post("/api/admin/profiles") {
-            contentType(ContentType.Application.Json)
-            header("Authorization", "Bearer $adminToken")
-            setBody("""{"userCode":"AUDIT_UC_001","name":"Audit profile","allowedApps":["com.android.settings"]}""")
-        }
-        assertEquals(HttpStatusCode.Created, profileResp.status)
 
         val deviceCode = "AUDIT_DEV_001"
         val deviceToken = TestAuthHelper.loginDevice(client, deviceCode)
@@ -127,12 +120,10 @@ class AuditIntegrationTest {
         assertEquals(HttpStatusCode.OK, registerResp.status)
         val deviceId = TestJsonHelper.extractField(registerResp.bodyAsText(), "deviceId")
 
-        val linkResp = client.put("/api/admin/devices/$deviceId/link") {
-            contentType(ContentType.Application.Json)
+        val lockResp = client.post("/api/admin/devices/$deviceId/lock") {
             header("Authorization", "Bearer $adminToken")
-            setBody("""{"userCode":"AUDIT_UC_001"}""")
         }
-        assertEquals(HttpStatusCode.OK, linkResp.status)
+        assertEquals(HttpStatusCode.OK, lockResp.status)
 
         val resetResp = client.post("/api/admin/devices/$deviceId/reset-unlock-pass") {
             contentType(ContentType.Application.Json)
@@ -140,6 +131,13 @@ class AuditIntegrationTest {
             setBody("""{"newPassword":"4321"}""")
         }
         assertEquals(HttpStatusCode.OK, resetResp.status)
+
+        val unlockResp = client.post("/api/device/unlock") {
+            contentType(ContentType.Application.Json)
+            header("Authorization", "Bearer $deviceToken")
+            setBody("""{"deviceCode":"$deviceCode","password":"4321"}""")
+        }
+        assertEquals(HttpStatusCode.OK, unlockResp.status)
 
         val cmdResp = client.post("/api/admin/devices/$deviceId/commands") {
             contentType(ContentType.Application.Json)
@@ -153,8 +151,9 @@ class AuditIntegrationTest {
         }
         assertEquals(HttpStatusCode.OK, auditResp.status)
         val body = auditResp.bodyAsText()
-        assertTrue(body.contains("LINK_PROFILE"))
-        assertTrue(body.contains("RESET_UNLOCK_PASS"))
+        assertTrue(body.contains("LOCK"))
+        assertTrue(body.contains("RESET_UNLOCK_PASSWORD"))
+        assertTrue(body.contains("UNLOCK"))
         assertTrue(body.contains("CREATE_COMMAND"))
     }
 
@@ -212,21 +211,131 @@ class AuditIntegrationTest {
 
         val adminToken = TestAuthHelper.loginAdmin(client)
 
-        val successAuditResp = client.get("/api/admin/audit?limit=100&offset=0&action=POLICY_APPLY_REPORTED_SUCCESS") {
+        val successAuditResp = client.get("/api/admin/audit?limit=100&offset=0&action=POLICY_APPLY_SUCCESS") {
             header("Authorization", "Bearer $adminToken")
         }
         assertEquals(HttpStatusCode.OK, successAuditResp.status)
         val successBody = successAuditResp.bodyAsText()
-        assertTrue(successBody.contains("POLICY_APPLY_REPORTED_SUCCESS"))
+        assertTrue(successBody.contains("POLICY_APPLY_SUCCESS"))
         assertTrue(successBody.contains(deviceCode))
 
-        val failedAuditResp = client.get("/api/admin/audit?limit=100&offset=0&action=POLICY_APPLY_REPORTED_FAILED") {
+        val failedAuditResp = client.get("/api/admin/audit?limit=100&offset=0&action=POLICY_APPLY_FAILED") {
             header("Authorization", "Bearer $adminToken")
         }
         assertEquals(HttpStatusCode.OK, failedAuditResp.status)
         val failedBody = failedAuditResp.bodyAsText()
-        assertTrue(failedBody.contains("POLICY_APPLY_REPORTED_FAILED"))
+        assertTrue(failedBody.contains("POLICY_APPLY_FAILED"))
         assertTrue(failedBody.contains(deviceCode))
+    }
+
+    @Test
+    fun testCommandCancelled_ShouldWriteAuditAction() = testApplication {
+        configureAuditTestApplication()
+        val client = createClient {
+            install(io.ktor.client.plugins.contentnegotiation.ContentNegotiation) { json() }
+        }
+
+        val adminToken = TestAuthHelper.loginAdmin(client)
+        val deviceCode = "AUDIT_CANCEL_DEV_001"
+        val deviceToken = TestAuthHelper.loginDevice(client, deviceCode)
+
+        val registerResp = client.post("/api/device/register") {
+            contentType(ContentType.Application.Json)
+            header("Authorization", "Bearer $deviceToken")
+            setBody("""{"deviceCode":"$deviceCode"}""")
+        }
+        assertEquals(HttpStatusCode.OK, registerResp.status)
+        val deviceId = TestJsonHelper.extractField(registerResp.bodyAsText(), "deviceId")
+
+        val createResp = client.post("/api/admin/devices/$deviceId/commands") {
+            contentType(ContentType.Application.Json)
+            header("Authorization", "Bearer $adminToken")
+            setBody("""{"type":"lock_screen","payload":"{}","ttlSeconds":600}""")
+        }
+        assertEquals(HttpStatusCode.Created, createResp.status)
+        val commandId = TestJsonHelper.extractField(createResp.bodyAsText(), "id")
+
+        val cancelResp = client.post("/api/admin/devices/$deviceId/commands/$commandId/cancel") {
+            contentType(ContentType.Application.Json)
+            header("Authorization", "Bearer $adminToken")
+            setBody("""{"reason":"Operator cancelled","errorCode":"ADMIN_CANCELLED"}""")
+        }
+        assertEquals(HttpStatusCode.OK, cancelResp.status)
+
+        val auditResp = client.get("/api/admin/audit?action=COMMAND_CANCELLED&targetType=COMMAND&targetId=$commandId&limit=50&offset=0") {
+            header("Authorization", "Bearer $adminToken")
+        }
+        assertEquals(HttpStatusCode.OK, auditResp.status)
+        val body = auditResp.bodyAsText()
+        assertTrue(body.contains("COMMAND_CANCELLED"))
+        assertTrue(body.contains(commandId))
+        assertTrue(body.contains("Operator cancelled"))
+    }
+
+    @Test
+    fun testCommandAckFailed_ShouldWriteAuditAction() = testApplication {
+        configureAuditTestApplication()
+        val client = createClient {
+            install(io.ktor.client.plugins.contentnegotiation.ContentNegotiation) { json() }
+        }
+
+        val adminToken = TestAuthHelper.loginAdmin(client)
+        val deviceCode = "AUDIT_ACK_FAILED_DEV_001"
+        val deviceToken = TestAuthHelper.loginDevice(client, deviceCode)
+
+        val registerResp = client.post("/api/device/register") {
+            contentType(ContentType.Application.Json)
+            header("Authorization", "Bearer $deviceToken")
+            setBody("""{"deviceCode":"$deviceCode"}""")
+        }
+        assertEquals(HttpStatusCode.OK, registerResp.status)
+        val deviceId = TestJsonHelper.extractField(registerResp.bodyAsText(), "deviceId")
+
+        val createResp = client.post("/api/admin/devices/$deviceId/commands") {
+            contentType(ContentType.Application.Json)
+            header("Authorization", "Bearer $adminToken")
+            setBody("""{"type":"lock_screen","payload":"{}","ttlSeconds":600}""")
+        }
+        assertEquals(HttpStatusCode.Created, createResp.status)
+
+        val pollResp = client.post("/api/device/poll") {
+            contentType(ContentType.Application.Json)
+            header("Authorization", "Bearer $deviceToken")
+            setBody("""{"deviceCode":"$deviceCode","limit":1}""")
+        }
+        assertEquals(HttpStatusCode.OK, pollResp.status)
+        val pollBody = pollResp.bodyAsText()
+        val commandId = TestJsonHelper.extractField(pollBody, "id")
+        val leaseToken = TestJsonHelper.extractField(pollBody, "leaseToken")
+
+        val ackResp = client.post("/api/device/ack") {
+            contentType(ContentType.Application.Json)
+            header("Authorization", "Bearer $deviceToken")
+            setBody(
+                """
+                {
+                  "deviceCode":"$deviceCode",
+                  "commandId":"$commandId",
+                  "leaseToken":"$leaseToken",
+                  "result":"FAILED",
+                  "error":"Command execution failed",
+                  "errorCode":"EXECUTION_FAILED",
+                  "output":"stacktrace"
+                }
+                """.trimIndent()
+            )
+        }
+        assertEquals(HttpStatusCode.OK, ackResp.status)
+
+        val auditResp = client.get("/api/admin/audit?action=COMMAND_ACK_FAILED&targetType=COMMAND&targetId=$commandId&limit=50&offset=0") {
+            header("Authorization", "Bearer $adminToken")
+        }
+        assertEquals(HttpStatusCode.OK, auditResp.status)
+        val body = auditResp.bodyAsText()
+        assertTrue(body.contains("COMMAND_ACK_FAILED"))
+        assertTrue(body.contains(commandId))
+        assertTrue(body.contains(deviceCode))
+        assertTrue(body.contains("EXECUTION_FAILED"))
     }
 
     @Test
@@ -318,7 +427,7 @@ class AuditIntegrationTest {
         assertTrue(refreshBody.contains("POLICY_REFRESH_ENQUEUED"))
         assertTrue(refreshBody.contains("COMMAND"))
 
-        val successUrl = "/api/admin/audit?action=POLICY_APPLY_REPORTED_SUCCESS&actorType=DEVICE&targetId=$deviceCode&limit=50&offset=0"
+        val successUrl = "/api/admin/audit?action=POLICY_APPLY_SUCCESS&actorType=DEVICE&targetId=$deviceCode&limit=50&offset=0"
         val successFiltered = client.get(successUrl) {
             header("Authorization", "Bearer $adminToken")
         }
@@ -326,10 +435,10 @@ class AuditIntegrationTest {
         val successBody = successFiltered.bodyAsText()
         println("DAY34_AUDIT_POLICY_SUCCESS_URL=$successUrl")
         println("DAY34_AUDIT_POLICY_SUCCESS_RESPONSE=$successBody")
-        assertTrue(successBody.contains("POLICY_APPLY_REPORTED_SUCCESS"))
+        assertTrue(successBody.contains("POLICY_APPLY_SUCCESS"))
         assertTrue(successBody.contains(deviceCode))
 
-        val failedUrl = "/api/admin/audit?action=POLICY_APPLY_REPORTED_FAILED&actorType=DEVICE&targetId=$deviceCode&limit=50&offset=0"
+        val failedUrl = "/api/admin/audit?action=POLICY_APPLY_FAILED&actorType=DEVICE&targetId=$deviceCode&limit=50&offset=0"
         val failedFiltered = client.get(failedUrl) {
             header("Authorization", "Bearer $adminToken")
         }
@@ -337,7 +446,7 @@ class AuditIntegrationTest {
         val failedBody = failedFiltered.bodyAsText()
         println("DAY34_AUDIT_POLICY_FAILED_URL=$failedUrl")
         println("DAY34_AUDIT_POLICY_FAILED_RESPONSE=$failedBody")
-        assertTrue(failedBody.contains("POLICY_APPLY_REPORTED_FAILED"))
+        assertTrue(failedBody.contains("POLICY_APPLY_FAILED"))
         assertTrue(failedBody.contains(deviceCode))
 
         val futureWindow = client.get("/api/admin/audit?fromEpochMillis=${now + 3_600_000}&limit=50&offset=0") {

@@ -257,11 +257,16 @@ class DeviceService(
 
         if (normalizedReq.policyApplyStatus == "SUCCESS" || normalizedReq.policyApplyStatus == "FAILED") {
             eventBus.publish(
-                TelemetryReceivedEvent(
-                    telemetryType = "policy_apply_reported_${normalizedReq.policyApplyStatus.lowercase()}",
+                PolicyAppliedEvent(
                     deviceCode = normalizedReq.deviceCode,
+                    status = normalizedReq.policyApplyStatus,
                     actorType = actorType,
                     actorUserId = actorUserId,
+                    appliedConfigVersionEpochMillis = normalizedReq.appliedConfigVersionEpochMillis,
+                    appliedConfigHash = normalizedReq.appliedConfigHash,
+                    policyAppliedAtEpochMillis = normalizedReq.policyAppliedAtEpochMillis,
+                    error = normalizedReq.policyApplyError,
+                    errorCode = normalizedReq.policyApplyErrorCode,
                 )
             )
         }

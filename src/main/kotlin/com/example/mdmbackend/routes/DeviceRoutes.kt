@@ -111,6 +111,7 @@ fun Route.deviceRoutes(cfg: AppConfig) {
                     commandService.deviceAck(
                         req = req,
                         sessionDeviceCode = principal.deviceCode,
+                        actorUserId = principal.userId,
                         ipAddress = call.bestEffortClientIpAddress(),
                     )
                 }.getOrElse { e ->
@@ -395,6 +396,6 @@ private fun ApplicationCall.bestEffortClientIpAddress(): String? {
 
     return forwardedFor
         ?: request.origin.remoteHost
-            ?.trim()
-            ?.takeIf { it.isNotEmpty() && !it.equals("unknown", ignoreCase = true) }
+            .trim()
+            .takeIf { it.isNotEmpty() && !it.equals("unknown", ignoreCase = true) }
 }

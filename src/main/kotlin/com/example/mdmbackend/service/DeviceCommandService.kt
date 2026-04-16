@@ -76,6 +76,17 @@ class DeviceCommandService(
             throw HttpException(HttpStatusCode.Conflict, "Command cannot be cancelled in current state")
         }
 
+        eventBus.publish(
+            CommandCancelledEvent(
+                commandId = updated.id,
+                deviceId = updated.deviceId,
+                type = updated.type,
+                reason = req.reason,
+                errorCode = req.errorCode,
+                actorUserId = cancelledByUserId,
+            )
+        )
+
         return AdminCancelCommandResponse(
             ok = true,
             status = updated.status.name,
@@ -109,7 +120,12 @@ class DeviceCommandService(
         return DevicePollCommandsResponse(commands = leased, serverTimeEpochMillis = System.currentTimeMillis())
     }
 
-    fun deviceAck(req: DeviceAckCommandRequest, sessionDeviceCode: String?, ipAddress: String? = null): DeviceAckCommandResponse {
+    fun deviceAck(
+        req: DeviceAckCommandRequest,
+        sessionDeviceCode: String?,
+        actorUserId: UUID? = null,
+        ipAddress: String? = null,
+    ): DeviceAckCommandResponse {
         if (sessionDeviceCode == null || sessionDeviceCode != req.deviceCode) {
             throw IllegalStateException("DeviceCode mismatch with session")
         }
@@ -117,6 +133,7 @@ class DeviceCommandService(
 
         val cmdId = UUID.fromString(req.commandId)
         val leaseToken = UUID.fromString(req.leaseToken)
+        val before = commands.getById(cmdId)
         val targetStatus = when (req.result.uppercase()) {
             "SUCCESS" -> CommandStatus.SUCCESS
             "FAILED" -> CommandStatus.FAILED
@@ -141,6 +158,21 @@ class DeviceCommandService(
                 )
             }
             throw IllegalStateException("Lease mismatch or command not found")
+        }
+
+        if (targetStatus == CommandStatus.FAILED && before?.status != CommandStatus.FAILED && updated.status == CommandStatus.FAILED) {
+            eventBus.publish(
+                CommandAckFailedEvent(
+                    commandId = updated.id,
+                    deviceId = updated.deviceId,
+                    deviceCode = req.deviceCode,
+                    type = updated.type,
+                    actorUserId = actorUserId,
+                    error = req.error,
+                    errorCode = req.errorCode,
+                    output = req.output,
+                )
+            )
         }
 
         devices.touchAckSuccess(deviceCode = req.deviceCode, ipAddress = ipAddress)

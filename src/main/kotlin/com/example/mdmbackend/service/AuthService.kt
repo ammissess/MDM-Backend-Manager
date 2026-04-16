@@ -18,6 +18,7 @@ class AuthService(
     private val sessions: SessionRepository,
 ) {
     data class LoginResult(
+        val userId: UUID,
         val token: UUID,
         val expiresAt: Instant,
         val role: String,
@@ -52,6 +53,7 @@ class AuthService(
         val session = sessions.create(user.id, expiresAt, req.deviceCode)
 
         return LoginResult(
+            userId = user.id,
             token = session.token,
             expiresAt = session.expiresAt,
             role = user.role.name,
