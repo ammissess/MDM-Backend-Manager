@@ -145,6 +145,55 @@ class DeviceSessionGuardIntegrationTest {
     }
 
     @Test
+    fun testPoll_DeviceCodeMismatch_ShouldReturn409() = testApplication {
+        configureDeviceSessionGuardTestApplication()
+        val client = createClient {
+            install(io.ktor.client.plugins.contentnegotiation.ContentNegotiation) { json() }
+        }
+
+        val token = TestAuthHelper.loginDevice(client, "GUARD_POLL_A")
+        val resp = client.post("/api/device/poll") {
+            contentType(ContentType.Application.Json)
+            header("Authorization", "Bearer $token")
+            setBody("""{"deviceCode":"GUARD_POLL_B","limit":1}""")
+        }
+
+        assertEquals(HttpStatusCode.Conflict, resp.status)
+        val body = resp.bodyAsText()
+        assertTrue(body.contains("deviceCode mismatch"))
+        assertTrue(body.contains("DEVICE_CODE_MISMATCH"))
+    }
+
+    @Test
+    fun testAck_DeviceCodeMismatch_ShouldReturn409() = testApplication {
+        configureDeviceSessionGuardTestApplication()
+        val client = createClient {
+            install(io.ktor.client.plugins.contentnegotiation.ContentNegotiation) { json() }
+        }
+
+        val token = TestAuthHelper.loginDevice(client, "GUARD_ACK_A")
+        val resp = client.post("/api/device/ack") {
+            contentType(ContentType.Application.Json)
+            header("Authorization", "Bearer $token")
+            setBody(
+                """
+                {
+                  "deviceCode":"GUARD_ACK_B",
+                  "commandId":"00000000-0000-0000-0000-000000000001",
+                  "leaseToken":"00000000-0000-0000-0000-000000000002",
+                  "result":"SUCCESS"
+                }
+                """.trimIndent()
+            )
+        }
+
+        assertEquals(HttpStatusCode.Conflict, resp.status)
+        val body = resp.bodyAsText()
+        assertTrue(body.contains("deviceCode mismatch"))
+        assertTrue(body.contains("DEVICE_CODE_MISMATCH"))
+    }
+
+    @Test
     fun testEvents_DeviceCodeMismatch_ShouldReturn409() = testApplication {
         configureDeviceSessionGuardTestApplication()
         val client = createClient {
