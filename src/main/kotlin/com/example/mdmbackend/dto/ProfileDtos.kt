@@ -15,6 +15,12 @@ data class ProfileCreateRequest(
     val disableStatusBar: Boolean = true,
     val kioskMode: Boolean = true,
     val blockUninstall: Boolean = true,
+    val lockPrivateDnsConfig: Boolean = false,
+    val lockVpnConfig: Boolean = false,
+    val blockDebuggingFeatures: Boolean = false,
+    val disableUsbDataSignaling: Boolean = false,
+    val disallowSafeBoot: Boolean = false,
+    val disallowFactoryReset: Boolean = false,
 )
 
 @Serializable
@@ -28,6 +34,12 @@ data class ProfileUpdateRequest(
     val disableStatusBar: Boolean? = null,
     val kioskMode: Boolean? = null,
     val blockUninstall: Boolean? = null,
+    val lockPrivateDnsConfig: Boolean? = null,
+    val lockVpnConfig: Boolean? = null,
+    val blockDebuggingFeatures: Boolean? = null,
+    val disableUsbDataSignaling: Boolean? = null,
+    val disallowSafeBoot: Boolean? = null,
+    val disallowFactoryReset: Boolean? = null,
 )
 
 @Serializable
@@ -44,6 +56,12 @@ data class ProfileResponse(
     val disableStatusBar: Boolean,
     val kioskMode: Boolean,
     val blockUninstall: Boolean,
+    val lockPrivateDnsConfig: Boolean,
+    val lockVpnConfig: Boolean,
+    val blockDebuggingFeatures: Boolean,
+    val disableUsbDataSignaling: Boolean,
+    val disallowSafeBoot: Boolean,
+    val disallowFactoryReset: Boolean,
 
 
     val updatedAtEpochMillis: Long,

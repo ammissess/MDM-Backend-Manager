@@ -130,6 +130,12 @@ class ProfileService(
             disableStatusBar = disableStatusBar,
             kioskMode = kioskMode,
             blockUninstall = blockUninstall,
+            lockPrivateDnsConfig = lockPrivateDnsConfig,
+            lockVpnConfig = lockVpnConfig,
+            blockDebuggingFeatures = blockDebuggingFeatures,
+            disableUsbDataSignaling = disableUsbDataSignaling,
+            disallowSafeBoot = disallowSafeBoot,
+            disallowFactoryReset = disallowFactoryReset,
             updatedAtEpochMillis = updatedAt.toEpochMillis(),
         )
     }

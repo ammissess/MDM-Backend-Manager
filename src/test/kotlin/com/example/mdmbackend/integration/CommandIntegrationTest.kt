@@ -10,6 +10,7 @@ import io.ktor.server.config.HoconApplicationConfig
 import io.ktor.server.testing.*
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertNotEquals
 import kotlin.test.assertTrue
 
 class CommandIntegrationTest {
@@ -501,6 +502,12 @@ class CommandIntegrationTest {
         assertEquals(HttpStatusCode.OK, listAfterLink.status)
         val bodyAfterLink = listAfterLink.bodyAsText()
         assertEquals(1, countCommandType(bodyAfterLink, "refresh_config"))
+        val detailAfterLink = client.get("/api/admin/devices/$deviceId") {
+            header("Authorization", "Bearer $adminToken")
+        }
+        assertEquals(HttpStatusCode.OK, detailAfterLink.status)
+        val desiredHashAfterLink = TestJsonHelper.extractField(detailAfterLink.bodyAsText(), "desiredConfigHash")
+        assertTrue(desiredHashAfterLink.isNotBlank())
 
         val updateResp = client.put("/api/admin/profiles/$profileId") {
             contentType(ContentType.Application.Json)
@@ -515,11 +522,17 @@ class CommandIntegrationTest {
         assertEquals(HttpStatusCode.OK, listAfterUpdate.status)
         val bodyAfterUpdate = listAfterUpdate.bodyAsText()
         assertEquals(1, countCommandType(bodyAfterUpdate, "refresh_config"))
+        val detailAfterNoopUpdate = client.get("/api/admin/devices/$deviceId") {
+            header("Authorization", "Bearer $adminToken")
+        }
+        assertEquals(HttpStatusCode.OK, detailAfterNoopUpdate.status)
+        val desiredHashAfterNoopUpdate = TestJsonHelper.extractField(detailAfterNoopUpdate.bodyAsText(), "desiredConfigHash")
+        assertEquals(desiredHashAfterLink, desiredHashAfterNoopUpdate)
 
         val updatePolicyResp = client.put("/api/admin/profiles/$profileId") {
             contentType(ContentType.Application.Json)
             header("Authorization", "Bearer $adminToken")
-            setBody("""{"disableWifi":true}""")
+            setBody("""{"lockPrivateDnsConfig":true}""")
         }
         assertEquals(HttpStatusCode.OK, updatePolicyResp.status)
 
@@ -529,6 +542,13 @@ class CommandIntegrationTest {
         assertEquals(HttpStatusCode.OK, listAfterPolicyUpdate.status)
         val bodyAfterPolicyUpdate = listAfterPolicyUpdate.bodyAsText()
         assertEquals(2, countCommandType(bodyAfterPolicyUpdate, "refresh_config"))
+        val detailAfterPolicyUpdate = client.get("/api/admin/devices/$deviceId") {
+            header("Authorization", "Bearer $adminToken")
+        }
+        assertEquals(HttpStatusCode.OK, detailAfterPolicyUpdate.status)
+        val desiredHashAfterPolicyUpdate = TestJsonHelper.extractField(detailAfterPolicyUpdate.bodyAsText(), "desiredConfigHash")
+        assertTrue(desiredHashAfterPolicyUpdate.isNotBlank())
+        assertNotEquals(desiredHashAfterLink, desiredHashAfterPolicyUpdate)
     }
 
     @Test

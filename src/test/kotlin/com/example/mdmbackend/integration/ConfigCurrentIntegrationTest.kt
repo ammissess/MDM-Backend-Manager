@@ -169,7 +169,13 @@ class ConfigCurrentIntegrationTest {
                   "disableCamera": true,
                   "disableStatusBar": true,
                   "kioskMode": true,
-                  "blockUninstall": true
+                  "blockUninstall": true,
+                  "lockPrivateDnsConfig": true,
+                  "lockVpnConfig": true,
+                  "blockDebuggingFeatures": true,
+                  "disableUsbDataSignaling": true,
+                  "disallowSafeBoot": true,
+                  "disallowFactoryReset": true
                 }
                 """.trimIndent()
             )
@@ -226,6 +232,12 @@ class ConfigCurrentIntegrationTest {
         assertTrue(currentBody.contains("com.example.alpha"))
         assertTrue(currentBody.contains("disableWifi"))
         assertTrue(currentBody.contains("true"))
+        assertEquals(true, TestJsonHelper.extractBooleanField(currentBody, "lockPrivateDnsConfig"))
+        assertEquals(true, TestJsonHelper.extractBooleanField(currentBody, "lockVpnConfig"))
+        assertEquals(true, TestJsonHelper.extractBooleanField(currentBody, "blockDebuggingFeatures"))
+        assertEquals(true, TestJsonHelper.extractBooleanField(currentBody, "disableUsbDataSignaling"))
+        assertEquals(true, TestJsonHelper.extractBooleanField(currentBody, "disallowSafeBoot"))
+        assertEquals(true, TestJsonHelper.extractBooleanField(currentBody, "disallowFactoryReset"))
         assertFalse(currentBody.contains("\"showWifi\""))
         assertFalse(currentBody.contains("\"showBluetooth\""))
 

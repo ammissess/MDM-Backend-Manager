@@ -33,6 +33,12 @@ object ProfilesTable : UUIDTable("profiles") {
     val disableStatusBar = bool("disable_status_bar").default(true)
     val kioskMode = bool("kiosk_mode").default(true)
     val blockUninstall = bool("block_uninstall").default(true)
+    val lockPrivateDnsConfig = bool("lock_private_dns_config").default(false)
+    val lockVpnConfig = bool("lock_vpn_config").default(false)
+    val blockDebuggingFeatures = bool("block_debugging_features").default(false)
+    val disableUsbDataSignaling = bool("disable_usb_data_signaling").default(false)
+    val disallowSafeBoot = bool("disallow_safe_boot").default(false)
+    val disallowFactoryReset = bool("disallow_factory_reset").default(false)
 
     val showWifi = bool("show_wifi").default(true)
     val showBluetooth = bool("show_bluetooth").default(true)

@@ -13,6 +13,12 @@ data class DeviceConfigResponse(
     val disableStatusBar: Boolean,
     val kioskMode: Boolean,
     val blockUninstall: Boolean,
+    val lockPrivateDnsConfig: Boolean,
+    val lockVpnConfig: Boolean,
+    val blockDebuggingFeatures: Boolean,
+    val disableUsbDataSignaling: Boolean,
+    val disallowSafeBoot: Boolean,
+    val disallowFactoryReset: Boolean,
 
     val configVersionEpochMillis: Long,
 )
@@ -27,5 +33,11 @@ data class CanonicalDesiredConfig(
     val disableStatusBar: Boolean,
     val kioskMode: Boolean,
     val blockUninstall: Boolean,
+    val lockPrivateDnsConfig: Boolean,
+    val lockVpnConfig: Boolean,
+    val blockDebuggingFeatures: Boolean,
+    val disableUsbDataSignaling: Boolean,
+    val disallowSafeBoot: Boolean,
+    val disallowFactoryReset: Boolean,
 )
 

@@ -29,6 +29,12 @@ data class ProfileRecord(
     val disableStatusBar: Boolean,
     val kioskMode: Boolean,
     val blockUninstall: Boolean,
+    val lockPrivateDnsConfig: Boolean,
+    val lockVpnConfig: Boolean,
+    val blockDebuggingFeatures: Boolean,
+    val disableUsbDataSignaling: Boolean,
+    val disallowSafeBoot: Boolean,
+    val disallowFactoryReset: Boolean,
 
     val showWifi: Boolean,
     val showBluetooth: Boolean,
@@ -78,6 +84,12 @@ class ProfileRepository {
             it[disableStatusBar] = req.disableStatusBar
             it[kioskMode] = req.kioskMode
             it[blockUninstall] = req.blockUninstall
+            it[lockPrivateDnsConfig] = req.lockPrivateDnsConfig
+            it[lockVpnConfig] = req.lockVpnConfig
+            it[blockDebuggingFeatures] = req.blockDebuggingFeatures
+            it[disableUsbDataSignaling] = req.disableUsbDataSignaling
+            it[disallowSafeBoot] = req.disallowSafeBoot
+            it[disallowFactoryReset] = req.disallowFactoryReset
 
             it[updatedAt] = Instant.now()
         }
@@ -97,6 +109,12 @@ class ProfileRepository {
             req.disableStatusBar?.let { v -> it[disableStatusBar] = v }
             req.kioskMode?.let { v -> it[kioskMode] = v }
             req.blockUninstall?.let { v -> it[blockUninstall] = v }
+            req.lockPrivateDnsConfig?.let { v -> it[lockPrivateDnsConfig] = v }
+            req.lockVpnConfig?.let { v -> it[lockVpnConfig] = v }
+            req.blockDebuggingFeatures?.let { v -> it[blockDebuggingFeatures] = v }
+            req.disableUsbDataSignaling?.let { v -> it[disableUsbDataSignaling] = v }
+            req.disallowSafeBoot?.let { v -> it[disallowSafeBoot] = v }
+            req.disallowFactoryReset?.let { v -> it[disallowFactoryReset] = v }
 
             it[updatedAt] = Instant.now()
         }
@@ -146,6 +164,12 @@ class ProfileRepository {
             disableStatusBar = row[ProfilesTable.disableStatusBar],
             kioskMode = row[ProfilesTable.kioskMode],
             blockUninstall = row[ProfilesTable.blockUninstall],
+            lockPrivateDnsConfig = row[ProfilesTable.lockPrivateDnsConfig],
+            lockVpnConfig = row[ProfilesTable.lockVpnConfig],
+            blockDebuggingFeatures = row[ProfilesTable.blockDebuggingFeatures],
+            disableUsbDataSignaling = row[ProfilesTable.disableUsbDataSignaling],
+            disallowSafeBoot = row[ProfilesTable.disallowSafeBoot],
+            disallowFactoryReset = row[ProfilesTable.disallowFactoryReset],
 
             showWifi = row[ProfilesTable.showWifi],
             showBluetooth = row[ProfilesTable.showBluetooth],
@@ -165,6 +189,12 @@ class ProfileRepository {
             disableStatusBar = p.disableStatusBar,
             kioskMode = p.kioskMode,
             blockUninstall = p.blockUninstall,
+            lockPrivateDnsConfig = p.lockPrivateDnsConfig,
+            lockVpnConfig = p.lockVpnConfig,
+            blockDebuggingFeatures = p.blockDebuggingFeatures,
+            disableUsbDataSignaling = p.disableUsbDataSignaling,
+            disallowSafeBoot = p.disallowSafeBoot,
+            disallowFactoryReset = p.disallowFactoryReset,
             configVersionEpochMillis = p.updatedAt.toEpochMilli(),
         )
 
@@ -178,6 +208,12 @@ class ProfileRepository {
             disableStatusBar = profile.disableStatusBar,
             kioskMode = profile.kioskMode,
             blockUninstall = profile.blockUninstall,
+            lockPrivateDnsConfig = profile.lockPrivateDnsConfig,
+            lockVpnConfig = profile.lockVpnConfig,
+            blockDebuggingFeatures = profile.blockDebuggingFeatures,
+            disableUsbDataSignaling = profile.disableUsbDataSignaling,
+            disallowSafeBoot = profile.disallowSafeBoot,
+            disallowFactoryReset = profile.disallowFactoryReset,
         )
 
         val canonicalJson = buildCanonicalJson(canonical)
@@ -197,7 +233,13 @@ class ProfileRepository {
             "\"disableCamera\":${config.disableCamera}," +
             "\"disableStatusBar\":${config.disableStatusBar}," +
             "\"kioskMode\":${config.kioskMode}," +
-            "\"blockUninstall\":${config.blockUninstall}" +
+            "\"blockUninstall\":${config.blockUninstall}," +
+            "\"lockPrivateDnsConfig\":${config.lockPrivateDnsConfig}," +
+            "\"lockVpnConfig\":${config.lockVpnConfig}," +
+            "\"blockDebuggingFeatures\":${config.blockDebuggingFeatures}," +
+            "\"disableUsbDataSignaling\":${config.disableUsbDataSignaling}," +
+            "\"disallowSafeBoot\":${config.disallowSafeBoot}," +
+            "\"disallowFactoryReset\":${config.disallowFactoryReset}" +
             "}"
     }
 
