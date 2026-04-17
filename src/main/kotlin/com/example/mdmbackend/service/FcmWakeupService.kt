@@ -17,6 +17,7 @@ import java.net.http.HttpResponse
 import java.nio.file.Files
 import java.nio.file.Path
 import java.time.Duration
+import java.time.Instant
 import kotlin.io.path.inputStream
 import kotlin.io.path.readText
 
@@ -54,8 +55,15 @@ class FcmWakeupService(
     fun handleCommandCreated(event: CommandCreatedEvent) {
         val target = devices.findWakeupTargetByDeviceId(event.deviceId)
         val triggerSource = if (event.type == "refresh_config") "refresh_config_enqueued" else "command_created"
+        val wakeupReason = buildWakeupReason(triggerSource = triggerSource, reason = "pending_command")
 
         if (target == null) {
+            devices.recordWakeupAttempt(
+                deviceId = event.deviceId,
+                attemptedAt = Instant.now(),
+                reason = wakeupReason,
+                result = "skipped_no_token",
+            )
             log.info(
                 "wake-up attempt triggerSource={} deviceId={} commandId={} commandType={} outcome=skipped_no_token",
                 triggerSource,
@@ -85,8 +93,26 @@ class FcmWakeupService(
                 event.type,
                 error.message ?: error::class.java.simpleName,
             )
+            devices.recordWakeupAttempt(
+                deviceId = event.deviceId,
+                attemptedAt = Instant.now(),
+                reason = wakeupReason,
+                result = "failed_exception",
+            )
             return
         }
+
+        val safeResult = when {
+            !result.attempted -> result.detail
+            result.delivered -> "delivered:${result.detail}"
+            else -> "not_delivered:${result.detail}"
+        }
+        devices.recordWakeupAttempt(
+            deviceId = event.deviceId,
+            attemptedAt = Instant.now(),
+            reason = wakeupReason,
+            result = safeResult,
+        )
 
         log.info(
             "wake-up attempt triggerSource={} deviceCode={} commandId={} commandType={} attempted={} delivered={} detail={}",
@@ -98,6 +124,16 @@ class FcmWakeupService(
             result.delivered,
             result.detail,
         )
+    }
+
+    private fun buildWakeupReason(triggerSource: String, reason: String): String {
+        val source = triggerSource.trim()
+        val detail = reason.trim()
+        return when {
+            source.isEmpty() -> detail
+            detail.isEmpty() -> source
+            else -> "$source:$detail"
+        }
     }
 }
 

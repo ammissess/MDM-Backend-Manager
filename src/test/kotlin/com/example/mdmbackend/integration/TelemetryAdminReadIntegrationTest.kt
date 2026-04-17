@@ -1016,6 +1016,66 @@ class TelemetryAdminReadIntegrationTest {
         assertEquals(1, failed24h)
         assertEquals(1, failed7d)
     }
+
+    @Test
+    fun testAdminDetail_ShouldExposeSafeFcmTransportHealthWithoutRawToken() = testApplication {
+        configureTelemetryTestApplication()
+        val client = createClient {
+            install(io.ktor.client.plugins.contentnegotiation.ContentNegotiation) { json() }
+        }
+
+        val deviceCode = "FCM_OBS_001"
+        val rawToken = "raw-fcm-token-should-not-leak"
+        val updatedAt = System.currentTimeMillis()
+
+        val deviceToken = TestAuthHelper.loginDevice(client, deviceCode)
+        val registerResp = client.post("/api/device/register") {
+            contentType(ContentType.Application.Json)
+            header("Authorization", "Bearer $deviceToken")
+            setBody("""{"deviceCode":"$deviceCode"}""")
+        }
+        assertEquals(HttpStatusCode.OK, registerResp.status)
+        val deviceId = TestJsonHelper.extractField(registerResp.bodyAsText(), "deviceId")
+
+        val upsertResp = client.post("/api/device/fcm-token") {
+            contentType(ContentType.Application.Json)
+            header("Authorization", "Bearer $deviceToken")
+            setBody(
+                """
+                {
+                  "deviceCode":"$deviceCode",
+                  "fcmToken":"$rawToken",
+                  "appVersion":"1.0.0",
+                  "updatedAtEpochMillis":$updatedAt
+                }
+                """.trimIndent()
+            )
+        }
+        assertEquals(HttpStatusCode.OK, upsertResp.status)
+
+        val adminToken = TestAuthHelper.loginAdmin(client)
+        val createCommandResp = client.post("/api/admin/devices/$deviceId/commands") {
+            contentType(ContentType.Application.Json)
+            header("Authorization", "Bearer $adminToken")
+            setBody("""{"type":"lock_screen","payload":"{}","ttlSeconds":600}""")
+        }
+        assertEquals(HttpStatusCode.Created, createCommandResp.status)
+
+        val detailResp = client.get("/api/admin/devices/$deviceId") {
+            header("Authorization", "Bearer $adminToken")
+        }
+        assertEquals(HttpStatusCode.OK, detailResp.status)
+
+        val body = detailResp.bodyAsText()
+        assertTrue(body.contains("hasFcmToken"))
+        assertTrue(body.contains("fcmTokenUpdatedAtEpochMillis"))
+        assertTrue(body.contains("lastWakeupAttemptAtEpochMillis"))
+        assertTrue(body.contains("lastWakeupReason"))
+        assertTrue(body.contains("command_created:pending_command"))
+        assertTrue(body.contains("lastWakeupResult"))
+        assertTrue(body.contains("disabled"))
+        assertFalse(body.contains(rawToken))
+    }
 }
 
 private fun ApplicationTestBuilder.configureTelemetryTestApplication() {

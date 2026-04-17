@@ -98,6 +98,9 @@ object DevicesTable : UUIDTable("devices") {
     val lastPolicyAppliedAt = timestamp("last_policy_applied_at").nullable()
     val fcmToken = varchar("fcm_token", 4096).nullable()
     val fcmTokenUpdatedAt = timestamp("fcm_token_updated_at").nullable()
+    val lastWakeupAttemptAt = timestamp("last_wakeup_attempt_at").nullable()
+    val lastWakeupReason = varchar("last_wakeup_reason", 255).nullable()
+    val lastWakeupResult = varchar("last_wakeup_result", 128).nullable()
 
     val createdAt = timestamp("created_at").clientDefault { Instant.now() }
     val lastSeenAt = timestamp("last_seen_at").clientDefault { Instant.now() }

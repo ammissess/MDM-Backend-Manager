@@ -29,3 +29,6 @@ Thumbs.db
 secrets/
 .gradle-home/
 .kotlin/
+ticket7-live-fcm-backend.log
+ticket8-backend-runtime.out.log
+ticket8-backend-runtime.err.log

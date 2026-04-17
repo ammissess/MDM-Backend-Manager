@@ -70,6 +70,9 @@ data class DeviceRecord(
     val lastPolicyAppliedAt: Instant?,
     val fcmToken: String?,
     val fcmTokenUpdatedAt: Instant?,
+    val lastWakeupAttemptAt: Instant?,
+    val lastWakeupReason: String?,
+    val lastWakeupResult: String?,
     val status: String,
     val lastSeenAt: Instant,
 )
@@ -310,6 +313,19 @@ class DeviceRepository {
         }
         if (updated == 0) return@transaction null
         findByDeviceCode(deviceCode)
+    }
+
+    fun recordWakeupAttempt(
+        deviceId: UUID,
+        attemptedAt: Instant,
+        reason: String,
+        result: String,
+    ): Boolean = transaction {
+        DevicesTable.update({ DevicesTable.id eq EntityID(deviceId, DevicesTable) }) {
+            it[DevicesTable.lastWakeupAttemptAt] = attemptedAt
+            it[DevicesTable.lastWakeupReason] = reason
+            it[DevicesTable.lastWakeupResult] = result
+        } > 0
     }
 
     fun findWakeupTargetByDeviceId(deviceId: UUID): DeviceWakeupTarget? = transaction {
@@ -716,6 +732,9 @@ class DeviceRepository {
             lastPolicyAppliedAt = row.getOrNull(DevicesTable.lastPolicyAppliedAt),
             fcmToken = row.getOrNull(DevicesTable.fcmToken),
             fcmTokenUpdatedAt = row.getOrNull(DevicesTable.fcmTokenUpdatedAt),
+            lastWakeupAttemptAt = row.getOrNull(DevicesTable.lastWakeupAttemptAt),
+            lastWakeupReason = row.getOrNull(DevicesTable.lastWakeupReason),
+            lastWakeupResult = row.getOrNull(DevicesTable.lastWakeupResult),
             status = row[DevicesTable.status].name,
             lastSeenAt = row[DevicesTable.lastSeenAt],
         )
