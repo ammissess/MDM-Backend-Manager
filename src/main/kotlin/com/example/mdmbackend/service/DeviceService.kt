@@ -34,6 +34,7 @@ data class UnlockResult(
     val ok: Boolean,
     val status: String,
     val message: String,
+    val code: String? = null,
 )
 
 class DeviceService(
@@ -293,8 +294,27 @@ class DeviceService(
         actorUserId: UUID? = null,
         actorDeviceCode: String? = null,
     ): UnlockResult {
-        val status = devices.findStatus(deviceCode) ?: return UnlockResult(false, "NOT_FOUND", "Device not found")
-        if (status == DeviceStatus.ACTIVE.name) return UnlockResult(true, DeviceStatus.ACTIVE.name, "Already unlocked")
+        val device = devices.findByDeviceCode(deviceCode)
+            ?: return UnlockResult(false, "NOT_FOUND", "Device not found")
+
+        if (device.profileId == null) {
+            return UnlockResult(
+                ok = false,
+                status = DeviceStatus.LOCKED.name,
+                message = "Device profile not linked",
+                code = "DEVICE_PROFILE_NOT_LINKED"
+            )
+        }
+
+        if (device.status == DeviceStatus.ACTIVE.name) {
+            return UnlockResult(true, DeviceStatus.ACTIVE.name, "Already unlocked")
+        }
+
+        // Backfill legacy rows that were created before unlock password hashing existed.
+        devices.ensureUnlockPassInitialized(
+            deviceCode = deviceCode,
+            defaultPassHash = PasswordHasher.hash(cfg.seed.defaultDeviceUnlockPass)
+        )
 
         val ok = devices.unlock(deviceCode, password)
         val result = if (ok) {

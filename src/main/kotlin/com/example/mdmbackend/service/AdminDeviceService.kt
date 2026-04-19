@@ -11,6 +11,7 @@ import com.example.mdmbackend.dto.AdminTelemetrySummaryResponse
 import com.example.mdmbackend.dto.AggregateCountItem
 import com.example.mdmbackend.dto.ComplianceSummary
 import com.example.mdmbackend.dto.HealthSummary
+import com.example.mdmbackend.middleware.normalizeClientIpCandidate
 import com.example.mdmbackend.model.CommandType
 import com.example.mdmbackend.repository.AuditRepository
 import com.example.mdmbackend.repository.DeviceRepository
@@ -115,6 +116,20 @@ class AdminDeviceService(
         val profile = userCode?.let { profiles.findByUserCode(it) }
         val profileId = profile?.id
         devices.setProfile(deviceId, profileId) ?: return null
+
+        if (profile == null) {
+            devices.lockDevice(deviceId)
+            if (actorUserId != null && before.status != "LOCKED") {
+                eventBus.publish(
+                    DeviceLockedEvent(
+                        deviceId = deviceId,
+                        deviceCode = before.deviceCode,
+                        previousStatus = before.status,
+                        actorUserId = actorUserId,
+                    )
+                )
+            }
+        }
 
         val desiredVersionEpochMillis = System.currentTimeMillis()
         if (profile != null) {
@@ -247,7 +262,7 @@ class AdminDeviceService(
             foregroundPackage = foregroundPackage,
             agentVersion = agentVersion,
             agentBuildCode = agentBuildCode,
-            ipAddress = ipAddress,
+            ipAddress = normalizeClientIpCandidate(ipAddress),
             currentLauncherPackage = currentLauncherPackage,
             uptimeMs = uptimeMs,
             abi = abi,

@@ -1,5 +1,6 @@
 package com.example.mdmbackend.integration
 
+import com.example.mdmbackend.model.DevicesTable
 import com.typesafe.config.ConfigFactory
 import com.typesafe.config.ConfigValueFactory
 import io.ktor.client.request.*
@@ -8,6 +9,10 @@ import io.ktor.http.*
 import io.ktor.serialization.kotlinx.json.json
 import io.ktor.server.config.HoconApplicationConfig
 import io.ktor.server.testing.*
+import org.jetbrains.exposed.dao.id.EntityID
+import org.jetbrains.exposed.sql.transactions.transaction
+import org.jetbrains.exposed.sql.update
+import java.util.UUID
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertNotEquals
@@ -313,6 +318,49 @@ class CommandIntegrationTest {
         assertTrue("\"lastCommandAckAtEpochMillis\"\\s*:\\s*\\d+".toRegex().containsMatchIn(detailBody))
         assertTrue(detailBody.contains("\"ipAddress\""))
         assertTrue(detailBody.contains("198.51.100.10"))
+    }
+
+    @Test
+    fun testPollWithInvalidClientIp_ShouldClearStaleInvalidStoredIp() = testApplication {
+        configureCommandTestApplication()
+        val client = createClient {
+            install(io.ktor.client.plugins.contentnegotiation.ContentNegotiation) { json() }
+        }
+
+        val deviceCode = "TEST_CMD_INVALID_IP_CLEAR_001"
+        val deviceToken = TestAuthHelper.loginDevice(client, deviceCode)
+        val registerResp = client.post("/api/device/register") {
+            contentType(ContentType.Application.Json)
+            header("Authorization", "Bearer $deviceToken")
+            setBody("""{"deviceCode":"$deviceCode"}""")
+        }
+        assertEquals(HttpStatusCode.OK, registerResp.status)
+        val deviceId = TestJsonHelper.extractField(registerResp.bodyAsText(), "deviceId")
+
+        val deviceUuid = UUID.fromString(deviceId)
+        transaction {
+            DevicesTable.update({ DevicesTable.id eq EntityID(deviceUuid, DevicesTable) }) {
+                it[DevicesTable.ipAddress] = "binance.com"
+            }
+        }
+
+        val pollResp = client.post("/api/device/poll") {
+            contentType(ContentType.Application.Json)
+            header("Authorization", "Bearer $deviceToken")
+            // No forwarding header here; backend must not preserve stale invalid DB domain.
+            setBody("""{"deviceCode":"$deviceCode","limit":1}""")
+        }
+        assertEquals(HttpStatusCode.OK, pollResp.status)
+
+        val storedIpAfter = transaction {
+            DevicesTable
+                .select(DevicesTable.ipAddress)
+                .where { DevicesTable.id eq EntityID(deviceUuid, DevicesTable) }
+                .limit(1)
+                .firstOrNull()
+                ?.getOrNull(DevicesTable.ipAddress)
+        }
+        assertEquals(null, storedIpAfter)
     }
 
     @Test

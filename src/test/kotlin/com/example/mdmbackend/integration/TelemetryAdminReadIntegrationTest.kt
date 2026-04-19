@@ -1,5 +1,6 @@
 package com.example.mdmbackend.integration
 
+import com.example.mdmbackend.model.DevicesTable
 import com.example.mdmbackend.module
 import com.typesafe.config.ConfigFactory
 import com.typesafe.config.ConfigValueFactory
@@ -16,6 +17,10 @@ import io.ktor.serialization.kotlinx.json.json
 import io.ktor.server.config.HoconApplicationConfig
 import io.ktor.server.testing.ApplicationTestBuilder
 import io.ktor.server.testing.testApplication
+import org.jetbrains.exposed.dao.id.EntityID
+import org.jetbrains.exposed.sql.update
+import org.jetbrains.exposed.sql.transactions.transaction
+import java.util.UUID
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
@@ -23,6 +28,41 @@ import kotlin.test.assertNotEquals
 import kotlin.test.assertTrue
 
 class TelemetryAdminReadIntegrationTest {
+
+    @Test
+    fun testAdminDetail_ShouldSanitizeInvalidStoredIpAddress() = testApplication {
+        configureTelemetryTestApplication()
+        val client = createClient {
+            install(io.ktor.client.plugins.contentnegotiation.ContentNegotiation) { json() }
+        }
+
+        val deviceCode = "TEST_ADMIN_IP_SANITIZE_001"
+        val deviceToken = TestAuthHelper.loginDevice(client, deviceCode)
+        val registerResp = client.post("/api/device/register") {
+            contentType(ContentType.Application.Json)
+            header("Authorization", "Bearer $deviceToken")
+            setBody("""{"deviceCode":"$deviceCode"}""")
+        }
+        assertEquals(HttpStatusCode.OK, registerResp.status)
+        val deviceId = TestJsonHelper.extractField(registerResp.bodyAsText(), "deviceId")
+
+        val deviceUuid = UUID.fromString(deviceId)
+        transaction {
+            DevicesTable.update({ DevicesTable.id eq EntityID(deviceUuid, DevicesTable) }) {
+                it[DevicesTable.ipAddress] = "binance.com"
+            }
+        }
+
+        val adminToken = TestAuthHelper.loginAdmin(client)
+        val detailResp = client.get("/api/admin/devices/$deviceId") {
+            header("Authorization", "Bearer $adminToken")
+        }
+        assertEquals(HttpStatusCode.OK, detailResp.status)
+
+        val body = detailResp.bodyAsText()
+        assertFalse(body.contains("\"ipAddress\":\"binance.com\""))
+        assertEquals("", TestJsonHelper.extractField(body, "ipAddress"))
+    }
 
     @Test
     fun testExtendedInventorySnapshot_AdminDetailShouldExposeNewFields_NullableFirstSafe() = testApplication {

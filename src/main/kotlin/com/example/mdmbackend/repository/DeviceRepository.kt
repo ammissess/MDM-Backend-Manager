@@ -1,5 +1,6 @@
 package com.example.mdmbackend.repository
 
+import com.example.mdmbackend.middleware.normalizeClientIpCandidate
 import com.example.mdmbackend.model.DeviceEventsTable
 import com.example.mdmbackend.model.DeviceInstalledAppsTable
 import com.example.mdmbackend.model.DeviceStatus
@@ -9,7 +10,6 @@ import com.example.mdmbackend.util.PasswordHasher
 import org.jetbrains.exposed.dao.id.EntityID
 import org.jetbrains.exposed.sql.Op
 import org.jetbrains.exposed.sql.ResultRow
-import org.jetbrains.exposed.sql.SqlExpressionBuilder.eq
 import org.jetbrains.exposed.sql.SqlExpressionBuilder.greaterEq
 import org.jetbrains.exposed.sql.SqlExpressionBuilder.lessEq
 import org.jetbrains.exposed.sql.SortOrder
@@ -19,7 +19,6 @@ import org.jetbrains.exposed.sql.count
 import org.jetbrains.exposed.sql.deleteWhere
 import org.jetbrains.exposed.sql.insert
 import org.jetbrains.exposed.sql.leftJoin
-import org.jetbrains.exposed.sql.select
 import org.jetbrains.exposed.sql.selectAll
 import org.jetbrains.exposed.sql.transactions.transaction
 import org.jetbrains.exposed.sql.update
@@ -261,28 +260,44 @@ class DeviceRepository {
     }
 
     fun touchPollSuccess(deviceCode: String, ipAddress: String?): DeviceRecord? = transaction {
+        val row = DevicesTable
+            .select(DevicesTable.id, DevicesTable.ipAddress)
+            .where { DevicesTable.deviceCode eq deviceCode }
+            .limit(1)
+            .firstOrNull()
+            ?: return@transaction null
+
+        val currentIpAddress = row.getOrNull(DevicesTable.ipAddress)
+        val resolvedIpAddress = resolveStoredIpAddress(currentIpAddress = currentIpAddress, incomingIpAddress = ipAddress)
         val now = Instant.now()
-        val updated = DevicesTable.update({ DevicesTable.deviceCode eq deviceCode }) {
+        DevicesTable.update({ DevicesTable.id eq row[DevicesTable.id] }) {
             it[DevicesTable.lastPollAt] = now
             it[DevicesTable.lastSeenAt] = now
-            if (!ipAddress.isNullOrBlank()) {
-                it[DevicesTable.ipAddress] = ipAddress
+            if (resolvedIpAddress != currentIpAddress) {
+                it[DevicesTable.ipAddress] = resolvedIpAddress
             }
         }
-        if (updated == 0) return@transaction null
         findByDeviceCode(deviceCode)
     }
 
     fun touchAckSuccess(deviceCode: String, ipAddress: String?): DeviceRecord? = transaction {
+        val row = DevicesTable
+            .select(DevicesTable.id, DevicesTable.ipAddress)
+            .where { DevicesTable.deviceCode eq deviceCode }
+            .limit(1)
+            .firstOrNull()
+            ?: return@transaction null
+
+        val currentIpAddress = row.getOrNull(DevicesTable.ipAddress)
+        val resolvedIpAddress = resolveStoredIpAddress(currentIpAddress = currentIpAddress, incomingIpAddress = ipAddress)
         val now = Instant.now()
-        val updated = DevicesTable.update({ DevicesTable.deviceCode eq deviceCode }) {
+        DevicesTable.update({ DevicesTable.id eq row[DevicesTable.id] }) {
             it[DevicesTable.lastCommandAckAt] = now
             it[DevicesTable.lastSeenAt] = now
-            if (!ipAddress.isNullOrBlank()) {
-                it[DevicesTable.ipAddress] = ipAddress
+            if (resolvedIpAddress != currentIpAddress) {
+                it[DevicesTable.ipAddress] = resolvedIpAddress
             }
         }
-        if (updated == 0) return@transaction null
         findByDeviceCode(deviceCode)
     }
 
@@ -588,6 +603,24 @@ class DeviceRepository {
         true
     }
 
+    fun ensureUnlockPassInitialized(deviceCode: String, defaultPassHash: String): Boolean = transaction {
+        val row = DevicesTable
+            .select(DevicesTable.unlockPassHash)
+            .where { DevicesTable.deviceCode eq deviceCode }
+            .limit(1)
+            .firstOrNull()
+            ?: return@transaction false
+
+        val current = row[DevicesTable.unlockPassHash]
+        if (current.isNotBlank()) return@transaction false
+
+        DevicesTable.update({ DevicesTable.deviceCode eq deviceCode }) {
+            it[DevicesTable.unlockPassHash] = defaultPassHash
+            it[DevicesTable.lastSeenAt] = Instant.now()
+        }
+        true
+    }
+
     fun getInstalledAppsByDeviceId(deviceId: UUID): DeviceInstalledAppsSnapshotRecord? = transaction {
         val deviceRow = DevicesTable
             .select(DevicesTable.id)
@@ -706,7 +739,7 @@ class DeviceRepository {
             foregroundPackage = row.getOrNull(DevicesTable.foregroundPackage),
             agentVersion = row.getOrNull(DevicesTable.agentVersion),
             agentBuildCode = row.getOrNull(DevicesTable.agentBuildCode),
-            ipAddress = row.getOrNull(DevicesTable.ipAddress),
+            ipAddress = normalizeClientIpCandidate(row.getOrNull(DevicesTable.ipAddress)),
             currentLauncherPackage = row.getOrNull(DevicesTable.currentLauncherPackage),
             uptimeMs = row.getOrNull(DevicesTable.uptimeMs),
             abi = row.getOrNull(DevicesTable.abi),
@@ -757,5 +790,13 @@ class DeviceRepository {
                     count = row[totalCount],
                 )
             }
+    }
+
+    private fun resolveStoredIpAddress(currentIpAddress: String?, incomingIpAddress: String?): String? {
+        val normalizedIncoming = normalizeClientIpCandidate(incomingIpAddress)
+        if (normalizedIncoming != null) return normalizedIncoming
+
+        if (currentIpAddress.isNullOrBlank()) return currentIpAddress
+        return normalizeClientIpCandidate(currentIpAddress)
     }
 }

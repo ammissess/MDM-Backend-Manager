@@ -189,7 +189,14 @@ fun Route.deviceRoutes(cfg: AppConfig) {
                 )
 
                 if (!result.ok) {
-                    call.respond(HttpStatusCode.Locked, mapOf("error" to result.message, "status" to result.status))
+                    call.respond(
+                        HttpStatusCode.Locked,
+                        mapOf(
+                            "error" to result.message,
+                            "status" to result.status,
+                            "code" to result.code,
+                        ).filterValues { it != null }
+                    )
                     return@post
                 }
 
@@ -385,12 +392,24 @@ fun Route.deviceRoutes(cfg: AppConfig) {
 
                 val status = deviceService.getDeviceStatus(deviceCode) ?: throw HttpException(HttpStatusCode.NotFound, "Device not found")
                 if (status != "ACTIVE") {
-                    call.respond(HttpStatusCode.Locked, mapOf("error" to "Device is locked", "status" to status))
+                    val hasLinkedProfile = deviceService.getCurrentConfigByDeviceCode(deviceCode) != null
+                    if (!hasLinkedProfile) {
+                        call.respond(
+                            HttpStatusCode.Locked,
+                            mapOf(
+                                "error" to "Device profile not linked",
+                                "status" to status,
+                                "code" to "DEVICE_PROFILE_NOT_LINKED"
+                            )
+                        )
+                    } else {
+                        call.respond(HttpStatusCode.Locked, mapOf("error" to "Device is locked", "status" to status))
+                    }
                     return@get
                 }
 
                 val config = deviceService.getCurrentConfigByDeviceCode(deviceCode)
-                    ?: throw HttpException(HttpStatusCode.NotFound, "Device profile not linked")
+                    ?: throw HttpException(HttpStatusCode.NotFound, "Device profile not linked", "DEVICE_PROFILE_NOT_LINKED")
 
                 call.respond(config)
             }

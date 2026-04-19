@@ -120,6 +120,28 @@ class AuditIntegrationTest {
         assertEquals(HttpStatusCode.OK, registerResp.status)
         val deviceId = TestJsonHelper.extractField(registerResp.bodyAsText(), "deviceId")
 
+        val profileResp = client.post("/api/admin/profiles") {
+            contentType(ContentType.Application.Json)
+            header("Authorization", "Bearer $adminToken")
+            setBody(
+                """
+                {
+                  "userCode":"AUDIT_UNLOCK_001",
+                  "name":"Audit unlock profile",
+                  "allowedApps":["com.android.settings"]
+                }
+                """.trimIndent()
+            )
+        }
+        assertEquals(HttpStatusCode.Created, profileResp.status)
+
+        val linkResp = client.put("/api/admin/devices/$deviceId/link") {
+            contentType(ContentType.Application.Json)
+            header("Authorization", "Bearer $adminToken")
+            setBody("""{"userCode":"AUDIT_UNLOCK_001"}""")
+        }
+        assertEquals(HttpStatusCode.OK, linkResp.status)
+
         val lockResp = client.post("/api/admin/devices/$deviceId/lock") {
             header("Authorization", "Bearer $adminToken")
         }

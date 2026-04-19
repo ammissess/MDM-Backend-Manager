@@ -91,10 +91,10 @@ private fun ApplicationTestBuilder.configureRateLimitTestApplication() {
         config = HoconApplicationConfig(
             baseConfig
                 .withValue("mdm.profile", ConfigValueFactory.fromAnyRef("integration-test"))
-                .withValue("mdm.rateLimit.login.maxRequests", ConfigValueFactory.fromAnyRef("2"))
-                .withValue("mdm.rateLimit.login.windowSeconds", ConfigValueFactory.fromAnyRef("60"))
-                .withValue("mdm.rateLimit.unlock.maxRequests", ConfigValueFactory.fromAnyRef("2"))
-                .withValue("mdm.rateLimit.unlock.windowSeconds", ConfigValueFactory.fromAnyRef("60"))
+                .withValue("mdm.profiles.integration-test.rateLimit.login.maxRequests", ConfigValueFactory.fromAnyRef("2"))
+                .withValue("mdm.profiles.integration-test.rateLimit.login.windowSeconds", ConfigValueFactory.fromAnyRef("60"))
+                .withValue("mdm.profiles.integration-test.rateLimit.unlock.maxRequests", ConfigValueFactory.fromAnyRef("2"))
+                .withValue("mdm.profiles.integration-test.rateLimit.unlock.windowSeconds", ConfigValueFactory.fromAnyRef("60"))
                 .withValue(
                     "mdm.db.jdbcUrl",
                     ConfigValueFactory.fromAnyRef(
